@@ -205,14 +205,7 @@ export class ChatView {
       }
       if (!reply) {
         reply = h('div', { class: 'content' });
-        out.push(
-          h(
-            'div',
-            { class: 'turn assistant' },
-            h('div', { class: 'who' }, h('span', { class: 'avatar bot' }, this.host.icon('bot')), h('span', {}, agentName)),
-            reply,
-          ),
-        );
+        out.push(h('div', { class: 'turn assistant', 'aria-label': `${agentName} 的回覆` }, reply));
       }
       if (message.role === 'assistant') {
         const body = h('div', { class: 'markdown' });
@@ -239,9 +232,8 @@ export class ChatView {
     const { h } = this.host;
     return h(
       'div',
-      { class: `turn user ${pending ? 'pending' : ''}` },
-      h('div', { class: 'who' }, h('span', { class: 'avatar me' }, '你'), h('span', {}, pending ? '你（傳送中）' : '你')),
-      h('div', { class: 'content user-text' }, text),
+      { class: `turn user ${pending ? 'pending' : ''}`, 'aria-label': pending ? '你的訊息（傳送中）' : '你的訊息' },
+      h('div', { class: 'bubble', title: pending ? '傳送中' : undefined }, text),
     );
   }
 

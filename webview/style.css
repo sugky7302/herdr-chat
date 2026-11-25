@@ -590,3 +590,20 @@ a { color: var(--vscode-textLink-foreground); }
 @container (max-width: 250px) {
   .chip-picker { max-width: 80px; }
 }
+
+/* 使用者訊息：靠右的對話泡泡；agent 回覆維持一般排版，不顯示名稱。 */
+.turn { padding: 6px 14px; }
+.turn + .turn { border-top: none; }
+.turn.user { background: none; display: flex; justify-content: flex-end; padding-top: 10px; }
+.turn.user .bubble {
+  max-width: 85%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  padding: 6px 10px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--vscode-chat-requestBubbleBackground, var(--vscode-input-background));
+  border: 1px solid var(--vscode-chat-requestBorder, var(--vscode-input-border, var(--border)));
+}
+.turn.user.pending .bubble { opacity: 0.6; }
+.turn.assistant { padding-bottom: 10px; }
