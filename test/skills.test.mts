@@ -182,3 +182,16 @@ test('Claude completion respects frontmatter names and hides automatic-only skil
   assert.equal((await commands.list('claude', root, [], 'team:release'))[0]?.description, 'Release the project');
   assert.equal((await commands.list('claude', root, [], 'global-review'))[0]?.insert, '/global-review ');
 });
+
+test('DeepSeek completion uses the shared scanner for its project and user skill directories', async (t) => {
+  const f = await fixture(t);
+  await f.write('project/.github/skills/review/SKILL.md', '---\nname: project-review\ndescription: GitHub project skill\n---\n');
+  await f.write('project/.agents/skills/check/SKILL.md', '---\nname: project-check\ndescription: Agents project skill\n---\n');
+  await f.write('home/.agents/skills/shared/SKILL.md', '---\nname: user-check\ndescription: User skill\n---\n');
+  for (const kind of ['dsh', 'dsh-tui']) {
+    const commands = new Commands({ get: (_key: string, fallback: unknown) => fallback }, { homeDir: path.join(f.base, 'home'), env: {} });
+    for (const name of ['project-review', 'project-check', 'user-check']) {
+      assert.equal((await commands.list(kind, path.join(f.base, 'project'), [], name))[0]?.insert, `/${name} `);
+    }
+  }
+});

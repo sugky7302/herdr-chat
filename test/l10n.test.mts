@@ -102,3 +102,18 @@ test('literal runtime translation calls and persisted system messages have a Tra
   await walk(path.join(root, 'src')); await walk(path.join(root, 'webview'));
   assert.deepEqual(missing, []);
 });
+
+test('chat interface text uses English message keys instead of hard-coded Chinese literals', async () => {
+  const file = path.join(root, 'webview/chat.ts');
+  const source = ts.createSourceFile(file, await fs.readFile(file, 'utf8'), ts.ScriptTarget.Latest, true);
+  const hardcoded: string[] = [];
+  const visit = (node: ts.Node) => {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node))
+        && /\p{Script=Han}/u.test(node.getText(source))) {
+      hardcoded.push(`${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}: ${node.getText(source)}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.deepEqual(hardcoded, []);
+});

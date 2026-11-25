@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentName, buildShellCommand, buildStartArgs, normalizePresets, switchCommand } from '../src/presets.ts';
+import { agentName, buildShellCommand, buildStartArgs, normalizePresets, presetForKind, switchCommand } from '../src/presets.ts';
 
 test('啟動參數依序放入固定參數、模型與 effort', () => {
   const preset = { id: 'codex', label: 'Codex', kind: 'codex', args: ['--search'], modelArgs: ['-m', '{model}'], effortArgs: ['-c', 'model_reasoning_effort="{effort}"'] };
@@ -36,4 +36,24 @@ test('模型短名稱', () => {
   assert.equal(shortModel('opus'), 'opus');
   assert.equal(shortModel('gpt-6.1-sol'), 'gpt-6.1-sol');
   assert.equal(shortModel('gemini-4-argon-medium'), 'gemini-4-argon');
+  assert.equal(shortModel('deepseek-official/deepseek-flash'), 'deepseek-flash');
+});
+
+test('DeepSeek 預設選項自動遷移舊指令並對應 dsh-tui kind', () => {
+  const presets = normalizePresets([
+    {
+      id: 'deepseek',
+      label: 'DeepSeek',
+      command: "'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'",
+      models: [],
+      efforts: [],
+    },
+  ]);
+  assert.equal(presets[0].command, 'dsh-tui');
+  assert.deepEqual(presets[0].models, ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']);
+  assert.deepEqual(presets[0].efforts, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(presets[0].switchModel, '/model deepseek-official/{model}');
+  assert.equal(presets[0].switchEffort, '/effort {effort}');
+  assert.equal(presetForKind(presets, 'dsh-tui')?.id, 'deepseek');
+  assert.equal(presetForKind(presets, 'dsh')?.id, 'deepseek');
 });

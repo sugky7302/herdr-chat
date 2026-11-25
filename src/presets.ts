@@ -23,6 +23,14 @@ export interface AgentPreset {
 
 const NAME_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
 
+const KIND_TO_PRESET_ID: Record<string, string> = {
+  'dsh-tui': 'deepseek',
+  dsh: 'deepseek',
+  deepseek: 'deepseek',
+};
+
+const LEGACY_DEEPSEEK_COMMAND = `'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'`;
+
 /** 移除格式不正確的選項，避免整個選單失效。 */
 export function normalizePresets(raw: unknown): AgentPreset[] {
   if (!Array.isArray(raw)) return [];
@@ -30,11 +38,22 @@ export function normalizePresets(raw: unknown): AgentPreset[] {
   const presets: AgentPreset[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
-    const preset = item as AgentPreset;
+    const preset = { ...(item as AgentPreset) };
     if (typeof preset.id !== 'string' || typeof preset.label !== 'string') continue;
     if (!preset.kind && !preset.command) continue;
     if (seen.has(preset.id)) continue;
     seen.add(preset.id);
+    if (preset.id === 'deepseek') {
+      if (preset.command === LEGACY_DEEPSEEK_COMMAND) preset.command = 'dsh-tui';
+      if (!preset.models?.length) {
+        preset.models = ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'];
+      }
+      if (!preset.efforts?.length) {
+        preset.efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+      }
+      preset.switchModel ??= '/model deepseek-official/{model}';
+      preset.switchEffort ??= '/effort {effort}';
+    }
     presets.push(preset);
   }
   return presets;
@@ -98,8 +117,11 @@ export function agentName(presetId: string, taken: Iterable<string>): string {
   return `${base}-${Date.now() % 1000}`;
 }
 
-/** herdr 回報的 agent 種類對應到選項。DeepSeek 等自訂指令的 agent 由記錄的對應找回。 */
+/** herdr 回報的 agent 種類對應到選項。DeepSeek 等自訂指令的 agent 由記錄的對應或預設代號找回。 */
 export function presetForKind(presets: AgentPreset[], kind: string | null | undefined): AgentPreset | undefined {
   if (!kind) return undefined;
-  return presets.find((preset) => preset.kind === kind);
+  const direct = presets.find((preset) => preset.kind === kind);
+  if (direct) return direct;
+  const mappedId = KIND_TO_PRESET_ID[kind.toLowerCase()];
+  return mappedId ? presets.find((preset) => preset.id === mappedId) : undefined;
 }

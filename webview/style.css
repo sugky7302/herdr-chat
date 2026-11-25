@@ -265,8 +265,8 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
 .tool-name { flex: none; }
 .tool-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family); }
 .markdown + .tool { margin-top: 0.5em; }
-.thinking { padding: 8px 14px; color: var(--vscode-descriptionForeground); }
-.notice { padding: 6px 14px; }
+.thinking { padding: 8px 20px; color: var(--vscode-descriptionForeground); }
+.notice { padding: 6px 20px; }
 
 .scroll-bottom {
   position: absolute;
@@ -289,7 +289,7 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
 .scroll-bottom:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
 
 /* ---------- 輸入區 ---------- */
-.composer { position: relative; padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+.composer { position: relative; padding: 8px 18px 12px; display: flex; flex-direction: column; gap: 6px; }
 .chat-input {
   position: relative;
   border: 1px solid var(--vscode-input-border, var(--border));
@@ -303,14 +303,14 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
   border: none;
   background: transparent;
   resize: none;
-  padding: 8px 10px 2px;
+  padding: 8px 14px 2px;
   min-height: 34px;
   max-height: 240px;
   line-height: 1.45;
   width: 100%;
 }
 .chat-input textarea:focus-visible { outline: none; }
-.chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 12px 0; }
 .dialog-slot:empty, .queue-slot:empty, .chips[hidden] { display: none; }
 .chip {
   display: inline-flex;
@@ -327,7 +327,7 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
 .chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip-remove { background: none; color: inherit; padding: 0 4px; }
 .chip-remove:hover:not(:disabled) { background: none; opacity: 0.7; }
-.input-toolbar { display: flex; align-items: center; gap: 2px; padding: 2px 4px 4px; min-width: 0; }
+.input-toolbar { display: flex; align-items: center; gap: 2px; padding: 2px 8px 4px; min-width: 0; }
 .tool-button {
   background: none;
   color: var(--vscode-icon-foreground, var(--vscode-foreground));
@@ -451,9 +451,9 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
   color: var(--vscode-badge-foreground);
 }
 .queue-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.queue-editor { display: flex; flex-direction: column; gap: 6px; padding-block: 8px 4px; }
-.queue-editor textarea { width: 100%; min-height: 4.5em; resize: vertical; font: inherit; }
-.queue-edit-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.composer-mode { padding: 6px 12px 0; }
+.queue-edit-heading { display: flex; align-items: center; gap: 6px; }
+.queue-edit-heading label { flex: 1; font-size: 0.9em; color: var(--vscode-descriptionForeground); }
 .queue-edit-help { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
 .queue-edit-error { color: var(--vscode-errorForeground); }
 
@@ -495,6 +495,7 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
 .icon-edit { --icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M11 2.5l2.5 2.5L6 12.5 3 13l.5-3z' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'/></svg>"); }
 .icon-trash { --icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.5 6.5v5M9.5 6.5v5' fill='none' stroke='black' stroke-width='1.2'/></svg>"); }
 .icon-check { --icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M3 8.5 6.5 12 13 4.5' fill='none' stroke='black' stroke-width='1.8'/></svg>"); }
+.icon-search { --icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='7' cy='7' r='4.2' fill='none' stroke='black' stroke-width='1.5'/><path d='M10.2 10.2 13.8 13.8' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'/></svg>"); }
 .icon-bot { --icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2.5' y='5' width='11' height='8' rx='2' fill='none' stroke='black' stroke-width='1.4'/><path d='M8 2v3' stroke='black' stroke-width='1.4'/><circle cx='6' cy='9' r='1' fill='black'/><circle cx='10' cy='9' r='1' fill='black'/></svg>"); }
 
 /* 寬度限制：避免程式碼或長路徑把側邊欄撐寬。 */
@@ -602,7 +603,7 @@ a { color: var(--vscode-textLink-foreground); }
 }
 
 /* 使用者訊息：靠右的對話泡泡；agent 回覆維持一般排版，不顯示名稱。 */
-.turn { padding: 6px 14px; }
+.turn { padding: 6px 20px; }
 .turn + .turn { border-top: none; }
 .turn.user { background: none; display: flex; justify-content: flex-end; padding-top: 10px; }
 .turn.user .bubble {
@@ -610,7 +611,7 @@ a { color: var(--vscode-textLink-foreground); }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.5;
-  padding: 6px 10px;
+  padding: 8px 14px;
   border-radius: 12px 12px 4px 12px;
   background: var(--vscode-chat-requestBubbleBackground, var(--vscode-input-background));
   border: 1px solid var(--vscode-chat-requestBorder, var(--vscode-input-border, var(--border)));
@@ -808,6 +809,72 @@ button.settings-agent-choice:hover:not(:disabled) { background: var(--vscode-lis
   .settings-diagnostics { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .settings-diagnostics dd { margin-bottom: 8px; }
 }
+/* 工具呼叫摺疊區塊（Codex 雙層執行紀錄樣式） */
+.tool-group { margin: 2px 0; }
+.turn-log { margin: 2px 0 8px; }
+.markdown + .tool-group, .tool-group + .markdown { margin-top: 0.5em; }
+.tool-group > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+  padding: 2px 6px 2px 0;
+  border-radius: 4px;
+  user-select: none;
+}
+.tool-group > summary::-webkit-details-marker { display: none; }
+.tool-group > summary::after {
+  content: '›';
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  text-align: center;
+  transition: transform 0.15s;
+}
+.tool-group[open] > summary::after { transform: rotate(90deg); }
+.tool-group > summary:hover { color: var(--vscode-foreground); }
+.tool-group > summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.tool-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-count .icon {
+  width: 13px;
+  height: 13px;
+  opacity: 0.85;
+}
+.tool-count .spinner { width: 10px; height: 10px; margin-right: 2px; }
+.turn-log-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 4px 2px;
+}
+.turn-log-body > .markdown {
+  font-size: 0.94em;
+  color: var(--vscode-foreground);
+  opacity: 0.92;
+}
+.tool-command-group { margin: 1px 0; }
+.tool-list {
+  padding: 2px 0 2px 14px;
+  border-left: 1px solid var(--border);
+  margin: 2px 0 2px 6px;
+}
+.tool .icon {
+  width: 13px;
+  height: 13px;
+  color: var(--vscode-descriptionForeground);
+}
 
 /* ---------- 捲動時固定問題（仿 Claude Code 擴充功能） ---------- */
 .exchange > .turn.user {
@@ -832,7 +899,7 @@ button.settings-agent-choice:hover:not(:disabled) { background: var(--vscode-lis
 }
 
 /* ---------- 輸入框（仿 Claude Code 擴充功能） ---------- */
-.composer { padding: 8px 10px 10px; }
+.composer { padding: 8px 18px 12px; }
 .chat-input {
   border-radius: 10px;
   border-color: var(--vscode-input-border, var(--border));
@@ -842,7 +909,7 @@ button.settings-agent-choice:hover:not(:disabled) { background: var(--vscode-lis
   border-color: var(--vscode-focusBorder);
   box-shadow: 0 0 0 1px var(--vscode-focusBorder);
 }
-.chat-input textarea { padding: 10px 12px 4px; min-height: 44px; }
+.chat-input textarea { padding: 10px 14px 4px; min-height: 44px; }
 .input-toolbar { gap: 4px; padding: 4px 6px 6px; }
 .input-toolbar .tool-button { width: 28px; height: 28px; border-radius: 6px; }
 .model-pill {

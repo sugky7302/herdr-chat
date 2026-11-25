@@ -1,10 +1,11 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { zstdDecompressSync } from 'node:zlib';
 import type { HerdrClient } from '../herdr/client';
 import type { PaneInfo } from '../herdr/types';
 import type { Transcript } from '../shared';
-import { claudeProjectDirName, parseAgy, parseClaude, parseCodex, type ParsedTranscript } from './parse';
+import { claudeProjectDirName, dshWorkspaceDirName, parseAgy, parseClaude, parseCodex, parseDsh, type ParsedTranscript } from './parse';
 import { readStatus } from '../claudeUsage';
 
 interface CacheEntry {
@@ -21,6 +22,7 @@ interface CacheEntry {
 export class TranscriptSource {
   private cache = new Map<string, CacheEntry>();
   private codexFileByPane = new Map<string, string>();
+  private dshFileByPane = new Map<string, string>();
 
   constructor(
     private readonly client: HerdrClient,
@@ -39,6 +41,11 @@ export class TranscriptSource {
       } else if (kind === 'agy') {
         const file = await this.findAgyFile(pane);
         if (file) return this.fromFile(pane.pane_id, 'agy', file, parseAgy);
+      } else if (kind === 'dsh' || kind === 'dsh-tui') {
+        const file = await this.findDshFile(pane);
+        if (file) return this.withDshStatus(file, await this.fromFile(pane.pane_id, 'dsh', file, parseDsh));
+        const idle = await this.dshIdleTranscript(pane);
+        if (idle) return idle;
       }
     } catch {
       // 讀不到原生紀錄時改用終端機文字。
@@ -68,14 +75,17 @@ export class TranscriptSource {
 
   private async fromFile(
     paneId: string,
-    source: 'claude' | 'codex' | 'agy',
+    source: 'claude' | 'codex' | 'agy' | 'dsh',
     file: string,
     parse: (text: string) => ParsedTranscript,
   ): Promise<Transcript> {
     const stat = await fs.stat(file);
     let entry = this.cache.get(paneId);
     if (!entry || entry.file !== file || entry.mtimeMs !== stat.mtimeMs || entry.size !== stat.size) {
-      const parsed = parse(await fs.readFile(file, 'utf8'));
+      const raw = file.endsWith('.zstd')
+        ? zstdDecompressSync(await fs.readFile(file)).toString('utf8')
+        : await fs.readFile(file, 'utf8');
+      const parsed = parse(raw);
       entry = { file, mtimeMs: stat.mtimeMs, size: stat.size, parsed };
       this.cache.set(paneId, entry);
     }
@@ -153,6 +163,118 @@ export class TranscriptSource {
     }
     return null;
   }
+
+  /**
+   * 尋找 dsh-tui 的原生對話紀錄（~/.dsh/sessions/<workspace>/<session-id>/session*.jsonl.zstd）。
+   * 優先使用 pane 的前景 process PID 對照 ~/.dsh-tui/session-mounts.json，再退回該目錄最新的紀錄。
+   */
+  private async findDshFile(pane: PaneInfo): Promise<string | null> {
+    const session = pane.agent_session;
+    if (session?.kind === 'path') return session.value;
+    if (session?.kind === 'id') {
+      const byId = await findDshSessionLogById(session.value);
+      if (byId) return byId;
+    }
+    const mountedIds = await this.findMountedDshSessions(pane.pane_id);
+    for (const id of mountedIds) {
+      const file = await findDshSessionLogById(id);
+      if (file) {
+        this.dshFileByPane.set(pane.pane_id, file);
+        return file;
+      }
+    }
+    if (mountedIds.length > 0) {
+      // 已掛載新 session 但尚未送出第一則訊息（目錄尚未寫入磁碟）。
+      return null;
+    }
+    const remembered = this.dshFileByPane.get(pane.pane_id);
+    if (remembered && (await exists(remembered))) return remembered;
+    const cwd = pane.foreground_cwd ?? pane.cwd;
+    if (!cwd) return null;
+    const files = await recentDshFilesForCwd(cwd);
+    const claimed = new Set(this.dshFileByPane.values());
+    const found = files.find((f) => !claimed.has(f)) ?? files[0] ?? null;
+    if (found) this.dshFileByPane.set(pane.pane_id, found);
+    return found;
+  }
+
+  private async findMountedDshSessions(paneId: string): Promise<string[]> {
+    try {
+      const [mountsText, procInfo] = await Promise.all([
+        fs.readFile(path.join(os.homedir(), '.dsh-tui', 'session-mounts.json'), 'utf8'),
+        this.client.request<any>('pane.process_info', { pane_id: paneId }).catch(() => null),
+      ]);
+      const mounts = JSON.parse(mountsText);
+      const owners: { pid: number; sessionIds?: string[] }[] = Array.isArray(mounts?.owners) ? mounts.owners : [];
+      if (!owners.length) return [];
+      const pids = new Set<number>();
+      if (typeof procInfo?.process_info?.foreground_process_group_id === 'number') {
+        pids.add(procInfo.process_info.foreground_process_group_id);
+      }
+      for (const proc of procInfo?.process_info?.foreground_processes ?? []) {
+        if (typeof proc?.pid === 'number') pids.add(proc.pid);
+      }
+      for (const owner of owners) {
+        if (pids.has(owner.pid) && Array.isArray(owner.sessionIds) && owner.sessionIds.length) {
+          return owner.sessionIds;
+        }
+      }
+    } catch {
+      // 忽略讀取失敗。
+    }
+    return [];
+  }
+
+  /** 從 ~/.dsh/storages/session_projcache 與 ~/.dsh-tui 偏好檔補齊 dsh-tui 的模型、effort 與 token 用量。 */
+  private async withDshStatus(file: string, transcript: Transcript): Promise<Transcript> {
+    const sessionId = path.basename(path.dirname(file));
+    const projFile = path.join(os.homedir(), '.dsh', 'storages', 'session_projcache', 'sessions', `${sessionId}.json`);
+    const next = { ...transcript };
+    try {
+      const data = JSON.parse(await fs.readFile(projFile, 'utf8'));
+      const rows = data?.record?.rows ?? {};
+      const sel = rows.modelSelection?.val?.lastUsed;
+      if (typeof sel?.model === 'string' && sel.model) next.model = sel.model;
+      if (typeof sel?.reasoningEffort === 'string' && sel.reasoningEffort) next.effort = sel.reasoningEffort;
+      const tu = rows.tokenUsage?.val;
+      if (tu) {
+        const sumBucket = (b: any) =>
+          (b?.uncachedInputTokens ?? 0) + (b?.cacheReadTokens ?? 0) + (b?.cacheWriteTokens ?? 0) + (b?.outputTokens ?? 0);
+        const contextTokens = tu.last?.buckets ? sumBucket(tu.last.buckets) : next.usage?.contextTokens;
+        const totalTokens = tu.totals ? sumBucket(tu.totals) : next.usage?.totalTokens;
+        const outputTokens = tu.totals?.outputTokens ?? next.usage?.outputTokens;
+        next.usage = {
+          ...(next.usage ?? {}),
+          contextTokens,
+          contextWindow: next.usage?.contextWindow ?? 1_048_576,
+          totalTokens,
+          outputTokens,
+        };
+      }
+    } catch {
+      // 快取不存在時維持從日誌解析出的結果。
+    }
+    const prefs = await readDshPrefs();
+    next.model ??= prefs.model;
+    next.effort ??= prefs.effort;
+    return next;
+  }
+
+  /** 新啟動的 dsh-tui 尚未送出第一則訊息時，直接顯示空白對話並附上目前的模型、effort 與上下文容量。 */
+  private async dshIdleTranscript(pane: PaneInfo): Promise<Transcript | null> {
+    const prefs = await readDshPrefs();
+    return {
+      paneId: pane.pane_id,
+      source: 'dsh',
+      messages: [],
+      model: prefs.model,
+      effort: prefs.effort,
+      usage: {
+        contextTokens: 0,
+        contextWindow: 1_048_576,
+      },
+    };
+  }
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -201,4 +323,80 @@ async function codexSessionCwd(file: string): Promise<string | null> {
   } finally {
     await handle.close();
   }
+}
+
+function dshSessionRoots(): string[] {
+  const home = os.homedir();
+  const roots: string[] = [];
+  if (process.env.DSH_TUI_SESSION_ROOT?.trim()) roots.push(process.env.DSH_TUI_SESSION_ROOT.trim());
+  const dshHome = process.env.DSH_HOME?.trim() || path.join(home, '.dsh');
+  roots.push(path.join(dshHome, 'sessions'));
+  roots.push(path.join(home, '.dsh-tui', 'sessions'));
+  return [...new Set(roots)];
+}
+
+/** 找出單一 dsh session 資料夾內最新世代的紀錄檔（例如 session.v4.jsonl.zstd）。 */
+async function selectDshGenerationLog(dir: string): Promise<string | null> {
+  const entries = await fs.readdir(dir).catch(() => [] as string[]);
+  let best: { name: string; version: number; compressed: boolean } | null = null;
+  for (const name of entries) {
+    const compressed = name.endsWith('.zstd');
+    const base = compressed ? name.slice(0, -'.zstd'.length) : name;
+    const match = /^session(?:\.v([1-9][0-9]*))?\.jsonl$/.exec(base);
+    if (!match) continue;
+    const version = match[1] ? Number(match[1]) : 0;
+    if (!best || version > best.version || (version === best.version && compressed && !best.compressed)) {
+      best = { name, version, compressed };
+    }
+  }
+  return best ? path.join(dir, best.name) : null;
+}
+
+async function findDshSessionLogById(sessionId: string): Promise<string | null> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(sessionId)) return null;
+  for (const root of dshSessionRoots()) {
+    const workspaces = await fs.readdir(root).catch(() => [] as string[]);
+    for (const ws of workspaces) {
+      for (const candidateId of [sessionId, `session-${sessionId}`]) {
+        const found = await selectDshGenerationLog(path.join(root, ws, candidateId));
+        if (found) return found;
+      }
+    }
+  }
+  return null;
+}
+
+async function recentDshFilesForCwd(cwd: string): Promise<string[]> {
+  const targetDir = dshWorkspaceDirName(cwd);
+  const candidates: { file: string; mtime: number }[] = [];
+  for (const root of dshSessionRoots()) {
+    const wsDir = path.join(root, targetDir);
+    const sessions = await fs.readdir(wsDir).catch(() => [] as string[]);
+    for (const sid of sessions) {
+      const logFile = await selectDshGenerationLog(path.join(wsDir, sid));
+      if (!logFile) continue;
+      const stat = await fs.stat(logFile).catch(() => null);
+      if (stat) candidates.push({ file: logFile, mtime: stat.mtimeMs });
+    }
+  }
+  return candidates.sort((a, b) => b.mtime - a.mtime).map((c) => c.file);
+}
+
+async function readDshPrefs(): Promise<{ model?: string; effort?: string }> {
+  const dir = path.join(os.homedir(), '.dsh-tui');
+  let model: string | undefined;
+  let effort: string | undefined;
+  try {
+    const m = JSON.parse(await fs.readFile(path.join(dir, 'model.json'), 'utf8'));
+    if (typeof m?.model === 'string' && m.model) model = m.model;
+  } catch {
+    // 預設為 deepseek-flash
+  }
+  try {
+    const e = JSON.parse(await fs.readFile(path.join(dir, 'effort.json'), 'utf8'));
+    if (typeof e?.effort === 'string' && e.effort) effort = e.effort;
+  } catch {
+    // 預設為 max
+  }
+  return { model: model ?? 'deepseek-flash', effort: effort ?? 'max' };
 }

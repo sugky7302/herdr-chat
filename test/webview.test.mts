@@ -1,8 +1,8 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import { Window, type HTMLTextAreaElement as DOMTextArea, type HTMLElement as DOMElement, type HTMLButtonElement as DOMButton } from 'happy-dom';
+import { Window, type HTMLButtonElement as DOMButton, type HTMLDetailsElement as DOMDetails, type HTMLElement as DOMElement, type HTMLTextAreaElement as DOMTextArea } from 'happy-dom';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const bundle = await build({
   absWorkingDir: fileURLToPath(new URL('..', import.meta.url)), entryPoints: ['webview/main.ts'],
@@ -48,6 +48,170 @@ function fixture(language = 'zh-TW', browserLanguage = 'en-US') {
   const updateTranscript = () => emit({ type: 'transcript', transcript: structuredClone(transcript) });
   return { window, document, sent, paneId, state, transcript, emit, input, messages, updateState, updateTranscript };
 }
+
+function queueFixture(attachments: string[] = []) {
+  const f = fixture();
+  f.transcript.queue = [{ id: 7, text: '原本的佇列訊息', attachments }]; f.updateTranscript();
+  return { ...f, edit() { f.document.querySelector<DOMButton>('button[aria-label="修改第 1 則佇列訊息"]')!.click(); } };
+}
+
+test('修改佇列時沿用原輸入框、帶入訊息並聚焦，紙飛機改成編輯圖示', async () => {
+  const f = queueFixture();
+  try {
+    const input = f.input(); f.edit();
+    assert.ok(f.input() === input);
+    assert.equal(f.document.querySelectorAll('textarea').length, 1);
+    assert.ok(f.document.activeElement === input);
+    assert.equal(input.value, '原本的佇列訊息');
+    const button = f.document.querySelector<DOMButton>('.send-button')!;
+    assert.ok(button.querySelector('.icon-edit'));
+    assert.equal(button.getAttribute('aria-label'), '儲存修改');
+    assert.equal(button.querySelector('.icon-send'), null);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('編輯按鈕更新原佇列，不新增訊息；成功後還原草稿與紙飛機', async () => {
+  const f = queueFixture();
+  try {
+    const input = f.input(); input.value = '尚未送出的草稿'; input.dispatchEvent(new f.window.Event('input')); f.edit();
+    input.value = '修改後的訊息'; input.dispatchEvent(new f.window.Event('input'));
+    const save = f.document.querySelector<DOMButton>('.send-button')!; save.click(); save.click();
+    assert.deepEqual(structuredClone(f.sent.filter((message) => message.type === 'updateQueued')), [{ type: 'updateQueued', paneId: f.paneId, id: 7, text: '修改後的訊息' }]);
+    assert.equal(f.sent.filter((message) => message.type === 'send').length, 0);
+    assert.equal(f.input().readOnly, true);
+    f.transcript.queue[0].text = '修改後的訊息'; f.updateTranscript();
+    f.emit({ type: 'queuedUpdated', paneId: f.paneId, id: 7 });
+    assert.ok(f.input() === input);
+    assert.equal(input.value, '尚未送出的草稿');
+    assert.equal(input.readOnly, false);
+    assert.ok(f.document.querySelector('.send-button .icon-send'));
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('Esc 取消修改並還原草稿，不會中斷 agent', async () => {
+  const f = queueFixture();
+  try {
+    const input = f.input(); input.value = '我的草稿'; input.dispatchEvent(new f.window.Event('input')); f.edit();
+    input.value = '不儲存的修改'; input.dispatchEvent(new f.window.Event('input'));
+    input.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert.equal(input.value, '我的草稿');
+    assert.ok(f.document.querySelector('.send-button .icon-send'));
+    assert.equal(f.sent.filter((message) => message.type === 'interrupt' || message.type === 'updateQueued').length, 0);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('Enter 儲存佇列修改，Shift+Enter 保留換行操作', async () => {
+  const f = queueFixture();
+  try {
+    f.edit(); const input = f.input();
+    input.value = '第一行\n第二行'; input.dispatchEvent(new f.window.Event('input'));
+    const newline = new f.window.KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true });
+    input.dispatchEvent(newline); assert.equal(newline.defaultPrevented, false);
+    assert.equal(f.sent.filter((message) => message.type === 'updateQueued').length, 0);
+    input.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    assert.equal(f.sent.find((message) => message.type === 'updateQueued')?.text, '第一行\n第二行');
+    assert.equal(f.sent.filter((message) => message.type === 'send').length, 0);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('儲存失敗或內容空白時，保留修改文字並在原輸入框顯示錯誤', async () => {
+  const f = queueFixture();
+  try {
+    f.edit(); const input = f.input();
+    input.value = '   '; input.dispatchEvent(new f.window.Event('input')); f.document.querySelector<DOMButton>('.send-button')!.click();
+    assert.equal(f.sent.filter((message) => message.type === 'updateQueued').length, 0);
+    assert.equal(input.getAttribute('aria-invalid'), 'true');
+    input.value = '要保留的修改'; input.dispatchEvent(new f.window.Event('input'));
+    assert.notEqual(input.getAttribute('aria-invalid'), 'true');
+    f.document.querySelector<DOMButton>('.send-button')!.click();
+    f.emit({ type: 'queuedUpdated', paneId: f.paneId, id: 7, error: '暫時無法更新' });
+    assert.equal(input.value, '要保留的修改');
+    assert.equal(input.readOnly, false);
+    assert.ok(f.document.querySelector('.send-button .icon-edit'));
+    assert.match(f.document.querySelector('.queue-edit-error')!.textContent, /暫時無法更新/);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('訊息已送出時，保留修改內容，可明確轉成新訊息而不會自動送出', async () => {
+  const f = queueFixture();
+  try {
+    const input = f.input(); input.value = '原來的草稿'; input.dispatchEvent(new f.window.Event('input')); f.edit();
+    input.value = '仍要保留的修改'; input.dispatchEvent(new f.window.Event('input'));
+    f.transcript.queue = []; f.updateTranscript();
+    assert.equal(input.value, '仍要保留的修改');
+    assert.equal(f.document.querySelector<DOMButton>('.send-button')!.disabled, true);
+    f.document.querySelector<DOMButton>('button[aria-label="保留為新訊息"]')!.click();
+    assert.equal(input.value, '原來的草稿\n\n仍要保留的修改');
+    assert.ok(f.document.querySelector('.send-button .icon-send'));
+    assert.equal(f.sent.filter((message) => message.type === 'send' || message.type === 'updateQueued').length, 0);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('修改佇列時保留原附件，取消後還原草稿附件', async () => {
+  const f = queueFixture(['/tmp/queued.md']);
+  try {
+    f.emit({ type: 'attachments', paneId: f.paneId, paths: ['/tmp/draft.md'] }); f.edit();
+    assert.match(f.document.querySelector('.chips')!.textContent, /queued.md/);
+    assert.equal(f.document.querySelector('.chips .chip-remove'), null);
+    assert.equal(f.document.querySelector<DOMButton>('button[aria-label="附加檔案"]')!.disabled, true);
+    f.document.querySelector<DOMButton>('button[aria-label="取消修改"]')!.click();
+    assert.match(f.document.querySelector('.chips')!.textContent, /draft.md/);
+    assert.doesNotMatch(f.document.querySelector('.chips')!.textContent, /queued.md/);
+    assert.ok(f.document.querySelector('.chips .chip-remove'));
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('修改佇列的中文組字與背景更新保留同一輸入框，不會誤存未完成文字', async () => {
+  const f = queueFixture();
+  try {
+    f.edit(); const input = f.input(); input.focus();
+    input.dispatchEvent(new f.window.CompositionEvent('compositionstart'));
+    input.value = '中文組字中'; input.dispatchEvent(new f.window.InputEvent('input', { isComposing: true }));
+    f.transcript.usage.contextTokens++; f.updateTranscript();
+    assert.ok(f.input() === input && f.document.activeElement === input);
+    input.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true, cancelable: true }));
+    f.document.querySelector<DOMButton>('.send-button')!.click();
+    assert.equal(f.sent.filter((message) => message.type === 'send' || message.type === 'updateQueued').length, 0);
+    input.dispatchEvent(new f.window.CompositionEvent('compositionend'));
+    input.value = '中文修改完成'; input.dispatchEvent(new f.window.InputEvent('input', { isComposing: false }));
+    await new Promise((resolve) => f.window.setTimeout(resolve, 10));
+    input.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+    assert.equal(f.sent.find((message) => message.type === 'updateQueued')?.text, '中文修改完成');
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('共用送出表單後，附加檔案與模型選單不會誤送訊息', async () => {
+  const f = fixture();
+  try {
+    f.state.presets = [{ id: 'claude', label: 'Claude', models: ['opus', 'sonnet'], efforts: [], canSwitchModel: true, canSwitchEffort: false }];
+    f.state.tabs[0].agents[0].presetId = 'claude'; f.updateState();
+    const input = f.input(); input.value = '尚未送出的草稿'; input.dispatchEvent(new f.window.Event('input'));
+    f.document.querySelector<DOMButton>('button[aria-label="附加檔案"]')!.click();
+    assert.equal(f.sent.filter((message) => message.type === 'pickFiles').length, 1);
+    f.document.querySelector<DOMButton>('.chip-picker')!.click();
+    f.document.querySelectorAll<DOMButton>('.picker-option')[1].click();
+    assert.equal(f.sent.filter((message) => message.type === 'send').length, 0);
+    assert.equal(input.value, '尚未送出的草稿');
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('切換 pane 後，各自保留佇列修改內容與原本草稿', async () => {
+  const f = queueFixture();
+  try {
+    const input = f.input(); input.value = '第一個 pane 的草稿'; input.dispatchEvent(new f.window.Event('input')); f.edit();
+    input.value = '第一個 pane 的修改'; input.dispatchEvent(new f.window.Event('input'));
+    f.emit({ type: 'openedPane', paneId: 'wE:p2' });
+    f.emit({ type: 'transcript', transcript: { ...structuredClone(f.transcript), paneId: 'wE:p2' } });
+    assert.equal(f.input().value, '');
+    assert.ok(f.document.querySelector('.send-button .icon-send'));
+    f.emit({ type: 'openedPane', paneId: f.paneId });
+    assert.equal(f.input().value, '第一個 pane 的修改');
+    assert.doesNotMatch(f.document.querySelector('.composer-mode')!.textContent, /已送出或移除/);
+    f.updateTranscript();
+    f.document.querySelector<DOMButton>('button[aria-label="取消修改"]')!.click();
+    assert.equal(f.input().value, '第一個 pane 的草稿');
+  } finally { await f.window.happyDOM.close(); }
+});
 
 test('中文組字期間，背景用量更新不會更換輸入框或中斷焦點', async () => {
   const f = fixture();
@@ -391,13 +555,13 @@ test('協作背景更新保留佇列編輯與附加檔案', async () => {
   try {
     f.transcript.queue = [{ id: 17, text: '稍後執行', attachments: ['/tmp/original.ts'] }]; f.updateTranscript();
     f.click('[aria-label="修改第 1 則佇列訊息"]');
-    const editor = f.document.querySelector<DOMTextArea>('.queue-editor textarea')!;
+    const editor = f.input();
     editor.value = '修改後的佇列內容'; editor.dispatchEvent(new f.window.Event('input')); editor.focus();
     f.task.events.push({ id: 'later-event', type: 'state_changed', text: '另一個 worker 更新', at: '2026-01-01T10:06:00Z' });
     f.emitTasks(); f.updateState();
-    assert.ok(f.document.querySelector('.queue-editor textarea') === editor);
+    assert.ok(f.input() === editor);
     assert.equal(editor.value, '修改後的佇列內容');
-    f.button('儲存修改').click();
+    f.document.querySelector<DOMButton>('.send-button')!.click();
     assert.equal(f.sent.find((message) => message.type === 'updateQueued')?.text, '修改後的佇列內容');
     f.emit({ type: 'queuedUpdated', paneId: f.paneId, id: 17 });
     f.emit({ type: 'attachments', paneId: f.paneId, paths: ['/tmp/prompt.md'] });
@@ -558,4 +722,193 @@ test('persisted system messages render in the current language without translati
       assert.equal(f.task.requests[0].error, '保存於舊語言的錯誤');
     } finally { await f.window.happyDOM.close(); }
   }
+});
+test('chat 的佇列編輯、工具紀錄、驗證提示與可存取標籤使用目前語言', async () => {
+  for (const language of ['en-US', 'zh-TW']) {
+    const english = language === 'en-US';
+    const f = fixture(language);
+    try {
+      f.transcript.messages = [
+        { role: 'user', text: '使用者的原文 {0}' },
+        { role: 'tool', tool: 'Bash', text: '工具原文' },
+        { role: 'tool', tool: 'Read', text: '/tmp/中文路徑' },
+        { role: 'assistant', text: '助理的原文 {0}' },
+      ];
+      f.transcript.queue = [{ id: 7, text: '佇列的原文 {0}', attachments: [] }]; f.updateTranscript();
+      assert.equal(f.document.querySelector('.turn-log > summary .tool-count')!.textContent, english ? 'Thinking…' : '思考中…');
+      f.state.tabs[0].agents[0].status = 'idle'; f.updateState();
+      assert.equal(f.document.querySelector('.turn-log > summary .tool-count')!.textContent, english ? 'Thought · 2 steps' : '已思考 · 2 個步驟');
+      assert.equal(f.document.querySelector('.tool-command-group > summary')!.textContent, english ? 'Ran commands Read files · 2 steps' : '執行了指令 已讀取檔案 · 2 個步驟');
+      f.transcript.messages[0].timestamp = 1000; f.transcript.messages[3].timestamp = 5000; f.updateTranscript();
+      assert.equal(f.document.querySelector('.turn-log > summary .tool-count')!.textContent, english ? 'Processed in 4s · 2 steps' : '處理耗時 4s · 2 個步驟');
+      assert.match(f.messages().textContent, /使用者的原文 \{0\}/);
+      assert.match(f.messages().textContent, /助理的原文 \{0\}/);
+      const label = english ? 'Edit queued message 1' : '修改第 1 則佇列訊息';
+      f.document.querySelector<DOMButton>(`button[aria-label="${label}"]`)!.click();
+      assert.equal(f.document.querySelector('.queue-edit-heading label')!.textContent, label);
+      assert.equal(f.input().value, '佇列的原文 {0}');
+      assert.equal(f.input().placeholder, english ? 'Edit queued message (Enter to save, Shift+Enter for a new line)' : '修改佇列訊息（Enter 儲存，Shift+Enter 換行）');
+      assert.equal(f.document.querySelector('.send-button')!.getAttribute('aria-label'), english ? 'Save changes' : '儲存修改');
+      f.input().value = ''; f.input().dispatchEvent(new f.window.Event('input'));
+      f.document.querySelector<DOMButton>('.send-button')!.click();
+      assert.equal(f.document.querySelector('.queue-edit-error')!.textContent, english ? 'Enter a message.' : '請輸入訊息。');
+      if (english) assert.doesNotMatch(f.document.querySelector('.composer-mode')!.textContent, /\p{Script=Han}/u);
+      f.transcript.queue = []; f.updateTranscript();
+      assert.equal(f.document.querySelector('.queue-edit-help')!.textContent, english ? 'This message has been sent or removed. Your edits are still in the composer.' : '這則訊息已送出或移除。修改內容仍保留在輸入框。');
+      assert.ok(f.document.querySelector(`button[aria-label="${english ? 'Keep as new message' : '保留為新訊息'}"]`));
+    } finally { await f.window.happyDOM.close(); }
+  }
+});
+
+test('使用者與助理訊息都能保存記憶，並保留正確的原始訊息索引', async () => {
+  const f = collaborationFixture('en-US');
+  try {
+    f.transcript.messages = [
+      { role: 'user', text: '保存這段使用者原文。' },
+      { role: 'tool', tool: 'Bash', text: 'pwd' },
+      { role: 'assistant', text: '保存這段助理原文。' },
+    ]; f.updateTranscript();
+    for (const [selector, index] of [['.turn.user', 0], ['.turn.assistant', 2]] as const) {
+      f.click(`${selector} .save-message-memory`);
+      f.button('Save to Claude-mem').click();
+      const saved = f.sent.filter((message) => message.type === 'saveTaskMemory').at(-1);
+      assert.equal(saved.source.messageIndex, index);
+      assert.equal(saved.source.text, f.transcript.messages[index].text);
+      f.emit({ type: 'taskOperation', kind: 'memory', tabId: f.task.tabId, operationId: saved.operationId, memoryId: 100 + index });
+    }
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('規劃者在中文組字期間轉為唯讀時，鍵盤與表單都不可送出佇列修改', async () => {
+  const f = collaborationFixture();
+  try {
+    f.transcript.queue = [{ id: 7, text: '保留這則佇列', attachments: [] }]; f.updateTranscript();
+    f.click('[aria-label="修改第 1 則佇列訊息"]');
+    const input = f.input(); input.dispatchEvent(new f.window.CompositionEvent('compositionstart'));
+    input.value = '正在組字'; input.dispatchEvent(new f.window.InputEvent('input', { isComposing: true }));
+    f.task.status = 'handoff_pending'; f.emitTasks();
+    input.dispatchEvent(new f.window.CompositionEvent('compositionend'));
+    input.value = '保留完成的中文修改'; input.dispatchEvent(new f.window.InputEvent('input', { isComposing: false }));
+    input.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    f.document.querySelector('form.chat-input')!.dispatchEvent(new f.window.Event('submit', { bubbles: true, cancelable: true }));
+    assert.equal(f.sent.filter((message) => message.type === 'send' || message.type === 'updateQueued').length, 0);
+    await new Promise((resolve) => f.window.setTimeout(resolve, 10));
+    assert.equal(input.disabled, true);
+    assert.equal(input.value, '保留完成的中文修改');
+    assert.ok(Array.from(f.document.querySelectorAll<DOMButton>('.composer button')).every((button) => button.disabled));
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('工作中手動展開執行紀錄，完成後自動摺疊，並保留一般回覆', async () => {
+  const f = fixture();
+  try {
+    f.transcript.messages = [
+      { role: 'user', text: '上一個任務', timestamp: 1_000_000 },
+      { role: 'tool', tool: 'Bash', text: 'pwd', timestamp: 1_003_000 },
+      { role: 'assistant', text: '上一個任務完成。', timestamp: 1_008_000 },
+      { role: 'user', text: '執行測試', timestamp: 2_000_000 },
+      { role: 'tool', tool: 'Bash', text: 'npm test', timestamp: 2_030_000 },
+      { role: 'tool', tool: 'Bash', text: 'npm run typecheck', timestamp: 2_132_000 },
+      { role: 'assistant', text: '測試全部通過。', timestamp: 2_132_000 },
+    ];
+    f.updateTranscript();
+    let groups = f.document.querySelectorAll<DOMDetails>('.turn-log');
+    assert.equal(groups.length, 2);
+    assert.equal(groups[0].open, false, '歷史回合保持摺疊');
+    assert.equal(groups[1].open, false, '沿用工具區塊預設摺疊的樣式');
+    assert.match(groups[0].querySelector('summary')!.textContent, /8s/);
+    groups[1].open = true;
+    const cmdGroup = groups[1].querySelector<DOMDetails>('.tool-command-group')!;
+    assert.ok(cmdGroup, '外層執行紀錄內包含指令摺疊區塊');
+    assert.equal(cmdGroup.open, false, '內層指令區塊預設摺疊');
+    cmdGroup.open = true;
+    assert.equal(groups[1].querySelectorAll('.tool').length, 2);
+    assert.match(groups[1].querySelector('summary')!.textContent, /2m 12s/);
+    assert.match(cmdGroup.querySelector('summary')!.textContent, /執行了指令/);
+    f.state.tabs[0].agents[0].status = 'done'; f.updateState();
+    groups = f.document.querySelectorAll<DOMDetails>('.turn-log');
+    assert.match(groups[1].querySelector('summary')!.textContent, /2/);
+    assert.ok(Array.from(groups).every((group) => !group.open));
+    const final = Array.from(f.document.querySelectorAll('.markdown')).find((node) => node.textContent === '測試全部通過。');
+    assert.ok(final && !final.closest('details'), '一般回覆不在摺疊區內');
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('等待確認時保留執行紀錄，結束工作後才摺疊', async () => {
+  const f = fixture();
+  try {
+    f.transcript.messages = [{ role: 'tool', tool: 'Bash', text: 'npm test' }]; f.updateTranscript();
+    f.document.querySelector<DOMDetails>('.turn-log')!.open = true;
+    f.state.tabs[0].agents[0].status = 'blocked'; f.updateState();
+    assert.equal(f.document.querySelector<DOMDetails>('.turn-log')!.open, true);
+    f.state.tabs[0].agents[0].status = 'idle'; f.updateState();
+    assert.equal(f.document.querySelector<DOMDetails>('.turn-log')!.open, false);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('手動開關執行紀錄後，新增內容與背景更新保留選擇及焦點', async () => {
+  const f = fixture();
+  try {
+    f.transcript.messages = [{ role: 'tool', tool: 'Bash', text: 'npm test' }]; f.updateTranscript();
+    f.document.querySelector<DOMDetails>('.turn-log')!.open = true;
+    f.transcript.messages.push({ role: 'tool', tool: 'Bash', text: 'npm run typecheck' }); f.updateTranscript();
+    assert.equal(f.document.querySelector<DOMDetails>('.turn-log')!.open, true);
+    f.state.tabs[0].agents[0].status = 'idle'; f.updateState();
+    const group = f.document.querySelector<DOMDetails>('.turn-log')!;
+    group.open = true; group.querySelector<DOMElement>('summary')!.focus();
+    f.transcript.messages.push({ role: 'assistant', text: '驗證完成。' }); f.updateTranscript();
+    const updated = f.document.querySelector<DOMDetails>('.turn-log')!;
+    assert.equal(updated.open, true, '完成後手動展開不可被背景更新關閉');
+    assert.ok(f.document.activeElement === updated.querySelector('summary'));
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('新回合預設摺疊，完成時只收合目前回合，保留手動展開的歷史紀錄', async () => {
+  const f = fixture();
+  try {
+    f.transcript.messages = [{ role: 'user', text: '第一個任務' }, { role: 'tool', tool: 'Bash', text: 'npm test' }]; f.updateTranscript();
+    f.state.tabs[0].agents[0].status = 'idle'; f.updateState();
+    f.document.querySelector<DOMDetails>('.turn-log')!.open = true;
+    f.state.tabs[0].agents[0].status = 'working'; f.updateState();
+    f.transcript.messages.push({ role: 'user', text: '第二個任務' }, { role: 'tool', tool: 'Bash', text: 'npm test' }); f.updateTranscript();
+    const groups = f.document.querySelectorAll<DOMDetails>('.turn-log');
+    assert.equal(groups[0].open, true);
+    assert.equal(groups[1].open, false);
+    groups[1].open = true;
+    f.state.tabs[0].agents[0].status = 'idle'; f.updateState();
+    const finished = f.document.querySelectorAll<DOMDetails>('.turn-log');
+    assert.equal(finished[0].open, true);
+    assert.equal(finished[1].open, false);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('不同工具區段維持原本順序，內層摺疊指令，最後回覆與終端機畫面不會被摺疊', async () => {
+  const f = fixture();
+  try {
+    f.transcript.messages = [
+      { role: 'tool', tool: 'Bash', text: 'pwd' },
+      { role: 'assistant', text: '接著執行測試。' },
+      { role: 'tool', tool: 'Bash', text: 'npm test' },
+      { role: 'terminal', text: '終端機畫面' },
+      { role: 'assistant', text: '完成。' },
+    ]; f.updateTranscript();
+    const content = f.document.querySelector('.turn.assistant .content')!;
+    assert.deepEqual(Array.from(content.querySelectorAll(':scope > :not(.message-actions)')).map((node) => node.classList.contains('turn-log') ? 'turn-log' : node.className), ['turn-log', 'terminal', 'markdown']);
+    const log = content.querySelector('.turn-log-body')!;
+    assert.deepEqual(Array.from(log.querySelectorAll(':scope > :not(.message-actions)')).map((node) => node.classList.contains('tool-command-group') ? 'tool-group' : node.className), ['tool-group', 'markdown', 'tool-group']);
+    assert.equal(content.querySelector(':scope > .markdown')!.closest('details'), null);
+    assert.equal(f.document.querySelector('.terminal')!.closest('details'), null);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('暫時無法取得 agent 狀態時，不會誤判工作已完成', async () => {
+  const f = fixture();
+  try {
+    f.transcript.messages = [{ role: 'tool', tool: 'Bash', text: 'npm test' }]; f.updateTranscript();
+    f.document.querySelector<DOMDetails>('.turn-log')!.open = true;
+    f.state.tabs[0].agents[0].status = 'unknown'; f.updateState();
+    assert.equal(f.document.querySelector<DOMDetails>('.turn-log')!.open, true);
+    f.state.tabs[0].agents[0].status = 'done'; f.updateState();
+    assert.equal(f.document.querySelector<DOMDetails>('.turn-log')!.open, false);
+  } finally { await f.window.happyDOM.close(); }
 });

@@ -8,6 +8,7 @@
     "type": "git",
     "url": "https://github.com/sugky7302/herdr-chat.git"
   },
+  "icon": "media/icon.png",
   "private": true,
   "license": "UNLICENSED",
   "engines": {
@@ -317,9 +318,21 @@
             {
               "id": "deepseek",
               "label": "DeepSeek",
-              "command": "'/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'",
-              "models": [],
-              "efforts": []
+              "command": "dsh-tui",
+              "models": [
+                "deepseek-flash",
+                "deepseek-v4-flash",
+                "deepseek-v4-flash-vision-exp"
+              ],
+              "efforts": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "switchModel": "/model deepseek-official/{model}",
+              "switchEffort": "/effort {effort}"
             },
             {
               "id": "antigravity",

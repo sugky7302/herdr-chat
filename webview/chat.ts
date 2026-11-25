@@ -1,9 +1,9 @@
 // 對話頁：Copilot 樣式的訊息列表與輸入框。
 
+import { getIntlLocale, t } from '../src/l10n.ts';
+import { shortModel } from '../src/modelName';
 import type { AgentView, ChatMessage, CompletionItem, FromWebview, PresetView, Transcript, Usage } from '../src/shared';
 import { renderMarkdown } from './markdown';
-import { shortModel } from '../src/modelName';
-import { getIntlLocale, t } from '../src/l10n.ts';
 
 type Child = Node | string | null | undefined | false;
 
@@ -72,11 +72,13 @@ export class ChatView {
   private bodyKey = '';
   private input: HTMLTextAreaElement | null = null;
   private composingElement: HTMLTextAreaElement | null = null;
-  private composerParts: { dialog: HTMLElement; queue: HTMLElement; chips: HTMLElement; toolbar: HTMLElement } | null = null;
+  private composerParts: { dialog: HTMLElement; queue: HTMLElement; mode: HTMLElement; chips: HTMLElement; toolbar: HTMLElement; form: HTMLFormElement } | null = null;
   private completion: CompletionState | null = null;
   private completionTimer: number | undefined;
   private nextRequestId = 1;
   private stickToBottom = true;
+  /** 保留手動開關狀態；目前回合完成時自動摺疊。 */
+  private readonly toolGroups = new Map<string, { open: boolean; active: boolean }>();
   /** 目前開啟的標籤選單。 */
   private openPicker: 'model' | 'effort' | null = null;
 
@@ -87,6 +89,7 @@ export class ChatView {
   /** 建立對話頁的主體。工具列由呼叫端負責。 */
   mount(paneId: string): HTMLElement[] {
     const { h } = this.host;
+    this.rememberToolGroups();
     if (this.paneId !== paneId) {
       this.stickToBottom = true;
       this.completion = null;
@@ -162,7 +165,16 @@ export class ChatView {
     if (this.paneId !== paneId) return;
     this.composerKey = '';
     this.renderComposer();
-    document.getElementById(error ? `queue-edit-${paneId}` : `composer-${paneId}`)?.focus();
+    document.getElementById(`composer-${paneId}`)?.focus();
+  }
+
+  private cancelQueueEdit(paneId: string): void {
+    if (this.queueEdits[paneId]?.saving) return;
+    delete this.queueEdits[paneId];
+    this.closeCompletion();
+    this.composerKey = '';
+    this.renderComposer();
+    document.getElementById(`composer-${paneId}`)?.focus();
   }
 
   onCompletions(requestId: number, items: CompletionItem[]): void {
@@ -208,6 +220,18 @@ export class ChatView {
 
   // ---------- 訊息 ----------
 
+  /** 在重建訊息前保存原生 details 狀態，不依賴非同步的 toggle 事件。 */
+  private rememberToolGroups(): string | undefined {
+    let focused: string | undefined;
+    for (const group of this.messages?.querySelectorAll<HTMLDetailsElement>('.tool-group') ?? []) {
+      const key = group.dataset.toolKey!;
+      const state = this.toolGroups.get(key);
+      if (state) state.open = group.open;
+      if (group.contains(document.activeElement)) focused = key;
+    }
+    return focused;
+  }
+
   private renderBody(): void {
     if (!this.paneId || !this.messages) return;
     const paneId = this.paneId;
@@ -217,8 +241,9 @@ export class ChatView {
     const items: HTMLElement[] = [];
     const transcript = this.transcript?.paneId === paneId ? this.transcript : null;
     const agent = this.host.agent(paneId);
-    const key = JSON.stringify([transcript?.source, transcript?.messages, this.pending[paneId], agent?.status === 'working', agent?.label, agent?.name, agent?.kind]);
+    const key = JSON.stringify([transcript?.source, transcript?.messages, this.pending[paneId], agent?.status, agent?.label, agent?.name, agent?.kind]);
     if (key !== this.bodyKey) {
+      const focusedTool = this.rememberToolGroups();
       this.bodyKey = key;
       if (!transcript) {
         items.push(h('div', { class: 'muted pad' }, h('span', { class: 'spinner' }), t("Loading conversation…")));
@@ -233,6 +258,11 @@ export class ChatView {
         }
       }
       this.messages.replaceChildren(...this.groupExchanges(items));
+      if (focusedTool) {
+        for (const group of this.messages.querySelectorAll<HTMLElement>('.tool-group')) {
+          if (group.dataset.toolKey === focusedTool) group.querySelector('summary')?.focus({ preventScroll: true });
+        }
+      }
     }
     this.renderComposer();
     if (this.messages.isConnected) {
@@ -272,48 +302,209 @@ export class ChatView {
     return out;
   }
 
-  /** 把連續的助理文字與工具呼叫合併成一個回覆區塊。 */
+  /**
+   * 把連續的助理文字與工具呼叫合併成一個回覆區塊。
+   * 回合有工具呼叫時，外層摺疊顯示處理耗時，內層再把連續指令摺疊。
+   */
   private renderTurns(messages: ChatMessage[], agent: AgentView | undefined): HTMLElement[] {
     const { h } = this.host;
     const out: HTMLElement[] = [];
-    let reply: HTMLElement | null = null;
     const agentName = agent?.label || agent?.name || agent?.kind || 'agent';
-    for (const [messageIndex, message] of messages.entries()) {
-      if (message.role === 'user') {
-        reply = null;
-        const turn = this.renderUser(message.text);
-        this.appendMemoryAction(turn, message, messageIndex, turn.querySelector('.bubble')!);
-        out.push(turn);
-        continue;
-      }
-      if (message.role === 'notice') {
-        reply = null;
-        out.push(h('div', { class: 'notice' }, message.text));
-        continue;
-      }
-      if (!reply) {
-        reply = h('div', { class: 'content' });
-        out.push(h('div', { class: 'turn assistant', 'aria-label': t("Reply from {0}", agentName) }, reply));
-      }
-      if (message.role === 'assistant') {
-        const body = h('div', { class: 'markdown' });
-        body.innerHTML = renderMarkdown(message.text);
-        reply.append(body);
-        this.appendMemoryAction(reply, message, messageIndex, body);
-      } else if (message.role === 'tool') {
-        reply.append(
+    const working = agent?.status === 'working';
+    const finished = agent?.status === 'idle' || agent?.status === 'done' || agent?.status === 'shell';
+    const lastUser = messages.reduce((last, message, index) => (message.role === 'user' ? index : last), -1);
+    const occurrences = new Map<string, number>();
+    let userText = '';
+    let userTimestamp: number | undefined;
+    const lastIndex = messages.length - 1;
+
+    interface TurnItem {
+      message: ChatMessage;
+      index: number;
+    }
+
+    let turnItems: TurnItem[] = [];
+    let turnStart = -1;
+    let turnUserText = '';
+    let turnUserTs: number | undefined;
+
+    const bindDetails = (identity: string, start: number, defaultOpen: boolean) => {
+      const occurrence = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, occurrence + 1);
+      const groupKey = JSON.stringify([identity, occurrence]);
+      const previous = this.toolGroups.get(groupKey);
+      // 等待確認或暫時失去狀態時，保留展開內容，直到確認工作完成。
+      const active = start > lastUser && !finished && (previous ? previous.active : working || agent?.status === 'blocked');
+      const open = previous ? Boolean(previous.open && !(previous.active && !active)) : defaultOpen;
+      this.toolGroups.set(groupKey, { open, active });
+      return { groupKey, open };
+    };
+
+    const renderCommandGroup = (tools: TurnItem[], turnUser: string, isTurnLast: boolean): HTMLDetailsElement => {
+      const first = tools[0];
+      const identity = JSON.stringify([this.paneId, this.transcript?.source, 'cmd', turnUser, first.message.tool, first.message.text]);
+      const { groupKey, open } = bindDetails(identity, first.index, false);
+      const list = h('div', { class: 'tool-list' });
+      for (const item of tools) {
+        const iconName = toolIconName(item.message.tool);
+        list.append(
           h(
             'div',
-            { class: 'tool', title: message.text },
-            this.host.icon('check'),
-            h('span', { class: 'tool-name' }, message.tool ?? 'tool'),
-            h('span', { class: 'tool-text' }, message.text),
+            { class: 'tool', title: item.message.text },
+            this.host.icon(iconName),
+            h('span', { class: 'tool-name' }, item.message.tool ?? 'tool'),
+            h('span', { class: 'tool-text' }, toolSummary(item.message.tool, item.message.text)),
           ),
         );
-      } else if (message.role === 'terminal') {
-        reply.append(h('pre', { class: 'terminal' }, message.text));
       }
-    }
+      const active = working && isTurnLast;
+      const summaryIcon = this.host.icon(groupIconName(tools.map((item) => item.message.tool)));
+      const label = commandGroupLabel(tools.map((item) => item.message));
+      const count = h(
+        'span',
+        { class: 'tool-count' },
+        ...(active
+          ? [h('span', { class: 'spinner' }), label]
+          : [summaryIcon, label]),
+      );
+      return h(
+        'details',
+        { class: `tool-group tool-command-group${active ? ' active' : ''}`, open, 'data-tool-key': groupKey },
+        h('summary', {}, count),
+        list,
+      );
+    };
+
+    const flushTurn = () => {
+      if (!turnItems.length) return;
+      const items = turnItems;
+      const start = turnStart;
+      const currentUserText = turnUserText;
+      const currentUserTs = turnUserTs;
+      turnItems = [];
+      turnStart = -1;
+
+      const reply = h('div', { class: 'content' });
+      out.push(h('div', { class: 'turn assistant', 'aria-label': t("Reply from {0}", agentName) }, reply));
+
+      const hasTools = items.some((item) => item.message.role === 'tool');
+      if (!hasTools) {
+        for (const item of items) {
+          if (item.message.role === 'assistant') {
+            const body = h('div', { class: 'markdown' });
+            body.innerHTML = renderMarkdown(item.message.text);
+            reply.append(body);
+            this.appendMemoryAction(reply, item.message, item.index, body);
+          } else if (item.message.role === 'terminal') {
+            reply.append(h('pre', { class: 'terminal' }, item.message.text));
+          }
+        }
+        return;
+      }
+
+      // 找出最後一筆工具呼叫的位置；在它之後的助理回覆與終端機畫面放在外層摺疊區外，保持永遠可見。
+      let lastToolIdx = -1;
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].message.role === 'tool') {
+          lastToolIdx = i;
+          break;
+        }
+      }
+
+      const firstTool = items.find((item) => item.message.role === 'tool')!;
+      const identity = JSON.stringify([this.paneId, this.transcript?.source, currentUserText, firstTool.message.tool, firstTool.message.text]);
+      const { groupKey, open } = bindDetails(identity, start, false);
+
+      const logBody = h('div', { class: 'turn-log-body' });
+      let toolBatch: TurnItem[] = [];
+      let toolSteps = 0;
+
+      const flushToolBatch = (batchEndIdx: number) => {
+        if (!toolBatch.length) return;
+        const isLast = items[batchEndIdx].index === lastIndex;
+        logBody.append(renderCommandGroup(toolBatch, currentUserText, isLast));
+        toolBatch = [];
+      };
+
+      for (let i = 0; i <= lastToolIdx; i++) {
+        const item = items[i];
+        if (item.message.role === 'tool') {
+          toolSteps++;
+          toolBatch.push(item);
+        } else {
+          flushToolBatch(i - 1);
+          if (item.message.role === 'assistant') {
+            const body = h('div', { class: 'markdown' });
+            body.innerHTML = renderMarkdown(item.message.text);
+            logBody.append(body);
+            this.appendMemoryAction(logBody, item.message, item.index, body);
+          } else if (item.message.role === 'terminal') {
+            // 終端機畫面維持在外層，不被摺疊。
+            reply.append(h('pre', { class: 'terminal' }, item.message.text));
+          }
+        }
+      }
+      flushToolBatch(lastToolIdx);
+
+      const durationText = turnDurationText(currentUserTs, items);
+      const isTurnActive = working && items[items.length - 1].index === lastIndex;
+      const headerLabel = isTurnActive
+        ? durationText
+          ? t('Thinking… {0}', durationText)
+          : t('Thinking…')
+        : durationText
+          ? toolSteps === 1 ? t('Processed in {0} · {1} step', durationText, toolSteps) : t('Processed in {0} · {1} steps', durationText, toolSteps)
+          : toolSteps === 1 ? t('Thought · {0} step', toolSteps) : t('Thought · {0} steps', toolSteps);
+
+      const count = h(
+        'span',
+        { class: 'tool-count' },
+        ...(isTurnActive ? [h('span', { class: 'spinner' }), headerLabel] : [headerLabel]),
+      );
+      const outerDetails = h(
+        'details',
+        { class: `tool-group turn-log${isTurnActive ? ' active' : ''}`, open, 'data-tool-key': groupKey },
+        h('summary', {}, count),
+        logBody,
+      );
+      reply.prepend(outerDetails);
+
+      for (let i = lastToolIdx + 1; i < items.length; i++) {
+        const item = items[i];
+        if (item.message.role === 'assistant') {
+          const body = h('div', { class: 'markdown' });
+          body.innerHTML = renderMarkdown(item.message.text);
+          reply.append(body);
+          this.appendMemoryAction(reply, item.message, item.index, body);
+        } else if (item.message.role === 'terminal') {
+          reply.append(h('pre', { class: 'terminal' }, item.message.text));
+        }
+      }
+    };
+
+    messages.forEach((message, index) => {
+      if (message.role === 'user') {
+        flushTurn();
+        userText = message.text;
+        userTimestamp = message.endTimestamp ?? message.timestamp;
+        const turn = this.renderUser(message.text);
+        this.appendMemoryAction(turn, message, index, turn.querySelector('.bubble')!);
+        out.push(turn);
+        return;
+      }
+      if (message.role === 'notice') {
+        flushTurn();
+        out.push(h('div', { class: 'notice' }, message.text));
+        return;
+      }
+      if (!turnItems.length) {
+        turnStart = index;
+        turnUserText = userText;
+        turnUserTs = userTimestamp;
+      }
+      turnItems.push({ message, index });
+    });
+    flushTurn();
     return out;
   }
 
@@ -344,7 +535,7 @@ export class ChatView {
 
   private renderComposer(): void {
     if (!this.paneId || !this.composer) return;
-    // 組字完成前，延後會更換佇列編輯框與工具列的更新。
+    // 組字完成前，延後編輯模式與工具列的更新。
     if (this.composingElement?.isConnected) return;
     const paneId = this.paneId;
     const { h, icon, send } = this.host;
@@ -352,6 +543,8 @@ export class ChatView {
     const preset = this.host.preset(agent);
     const transcript = this.transcript?.paneId === paneId ? this.transcript : null;
     const readOnly = this.host.readOnly?.(paneId);
+    const edit = this.queueEdits[paneId];
+    const available = transcript ? Boolean(edit && transcript.queue?.some((item) => item.id === edit.id)) : null;
     const key = JSON.stringify([
       paneId,
       readOnly,
@@ -378,14 +571,28 @@ export class ChatView {
     const waiting = agent?.status === 'blocked' || Boolean(transcript?.dialog?.length);
 
     if (!this.input) {
-      this.input = h('textarea', { id: `composer-${paneId}`, rows: 1, 'aria-label': t("Message") });
+      this.input = h('textarea', { id: `composer-${paneId}`, name: 'message', rows: 1, 'aria-label': t('Message') });
       this.trackComposition(this.input);
     }
     const textarea = this.input;
+    const text = edit ? edit.text : draft.text;
+    if (textarea.value !== text) textarea.value = text;
     textarea.disabled = Boolean(readOnly);
-    if (textarea.value !== draft.text) textarea.value = draft.text;
-    textarea.placeholder = waiting
-        ? t("Choose an option above. After choosing “Type something”, enter your answer here.")
+    textarea.readOnly = Boolean(edit?.saving);
+    textarea.required = Boolean(edit && !edit.attachments.length);
+    if (edit) {
+      textarea.removeAttribute('aria-label');
+      textarea.setAttribute('aria-labelledby', `queue-edit-${paneId}-label`);
+      textarea.setAttribute('aria-describedby', `queue-edit-${paneId}-help queue-edit-${paneId}-error`);
+    } else {
+      textarea.setAttribute('aria-label', t('Message'));
+      textarea.removeAttribute('aria-labelledby');
+      textarea.removeAttribute('aria-describedby');
+    }
+    if (edit?.error) textarea.setAttribute('aria-invalid', 'true');
+    else textarea.removeAttribute('aria-invalid');
+    textarea.placeholder = edit ? t('Edit queued message (Enter to save, Shift+Enter for a new line)') : waiting
+        ? t('Choose an option above. After choosing “Type something”, enter your answer here.')
         : working
           ? t("Working: Enter to queue, ⌘/Ctrl+Enter to send immediately")
           : t("Message, / commands, @ files (Enter to send)");
@@ -394,8 +601,16 @@ export class ChatView {
       textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
     };
     textarea.oninput = () => {
-      draft.text = textarea.value;
-      this.host.persist();
+      if (edit) {
+        edit.text = textarea.value;
+        edit.error = undefined;
+        textarea.removeAttribute('aria-invalid');
+        const error = document.getElementById(`queue-edit-${paneId}-error`);
+        if (error) { error.hidden = true; error.textContent = ''; }
+      } else {
+        draft.text = textarea.value;
+        this.host.persist();
+      }
       autosize();
       this.updateCompletion(textarea, paneId);
     };
@@ -405,12 +620,31 @@ export class ChatView {
       const files = Array.from(event.clipboardData?.files ?? []);
       if (files.length) {
         event.preventDefault();
-        void this.uploadFiles(paneId, files);
+        if (edit) this.flash(t('Attachments are preserved while editing queued messages.'));
+        else void this.uploadFiles(paneId, files);
       }
     };
 
     const submit = (mode: 'queue' | 'now') => {
       if (this.composingElement === textarea || this.host.readOnly?.(paneId)) return;
+      if (edit) {
+        if (edit.saving || !available || !agent) return;
+        if (!edit.text.trim() && !edit.attachments.length) {
+          edit.error = t('Enter a message.');
+          this.composerKey = '';
+          this.renderComposer();
+          textarea.focus();
+          return;
+        }
+        edit.saving = true;
+        edit.error = undefined;
+        this.closeCompletion();
+        this.composerKey = '';
+        this.renderComposer();
+        textarea.focus();
+        send({ type: 'updateQueued', paneId, id: edit.id, text: edit.text });
+        return;
+      }
       const text = draft.text.trim();
       const attachments = draft.attachments ?? [];
       if (!text && !attachments.length) return;
@@ -437,16 +671,17 @@ export class ChatView {
     };
 
     // 附加檔案
-    const chips = (draft.attachments ?? []).map((file) =>
+    const chips = (edit?.attachments ?? draft.attachments ?? []).map((file) =>
       h(
         'span',
         { class: 'chip', title: file },
         icon('file'),
         h('span', { class: 'chip-text' }, file.split('/').pop() ?? file),
-        h(
+        !edit ? h(
           'button',
           {
             class: 'chip-remove',
+            type: 'button',
             title: t("Remove"),
             'aria-label': t("Remove {0}", file),
             onclick: () => {
@@ -457,7 +692,7 @@ export class ChatView {
             },
           },
           '×',
-        ),
+        ) : null,
       ),
     );
 
@@ -477,12 +712,12 @@ export class ChatView {
     };
 
     const toolbar: HTMLElement[] = [
-      h('button', { class: 'tool-button', title: t("Attach files"), 'aria-label': t("Attach files"), onclick: () => send({ type: 'pickFiles', paneId }) }, icon('attach')),
-      h('button', { class: 'tool-button trigger', title: t("Mention a file (@)"), 'aria-label': t("Mention a file"), onclick: () => insertTrigger('@') }, '@'),
-      h('button', { class: 'tool-button trigger', title: t("Commands (/)"), 'aria-label': t("Commands"), onclick: () => insertTrigger('/') }, '/'),
+      h('button', { type: 'button', class: 'tool-button', title: edit ? t('Keep attachments while editing') : t("Attach files"), 'aria-label': t("Attach files"), disabled: Boolean(edit), onclick: () => send({ type: 'pickFiles', paneId }) }, icon('attach')),
+      h('button', { type: 'button', class: 'tool-button trigger', title: t("Mention a file (@)"), 'aria-label': t("Mention a file"), disabled: Boolean(edit?.saving), onclick: () => insertTrigger('@') }, '@'),
+      h('button', { type: 'button', class: 'tool-button trigger', title: t("Commands (/)"), 'aria-label': t("Commands"), disabled: Boolean(edit?.saving), onclick: () => insertTrigger('/') }, '/'),
     ];
     const pill: HTMLElement[] = [];
-    if (preset?.models.length) {
+    if (!edit && preset?.models.length) {
       pill.push(
         this.chipPicker('model', preset.models, draft.model, t("Model"), currentModel, !preset.canSwitchModel, (value) => {
           draft.model = value || undefined;
@@ -491,7 +726,7 @@ export class ChatView {
         }),
       );
     }
-    if (preset?.efforts.length) {
+    if (!edit && preset?.efforts.length) {
       pill.push(
         this.chipPicker('effort', preset.efforts, draft.effort, t('Effort'), currentEffort, !preset.canSwitchEffort, (value) => {
           draft.effort = value || undefined;
@@ -505,29 +740,35 @@ export class ChatView {
     if (transcript?.usage) toolbar.push(this.renderUsage(transcript.usage));
     if (agent?.status === 'working') {
       toolbar.push(
-        h('button', { class: 'tool-button', title: t("Interrupt (Esc)"), 'aria-label': t("Interrupt"), onclick: () => send({ type: 'interrupt', paneId }) }, icon('stop')),
-        h('button', { class: 'tool-button', title: t("Send immediately (⌘/Ctrl+Enter)"), 'aria-label': t("Send immediately"), disabled: !agent, onclick: () => submit('now') }, icon('bolt')),
+        h('button', { type: 'button', class: 'tool-button', title: edit ? t('Interrupt agent') : t("Interrupt (Esc)"), 'aria-label': t("Interrupt"), onclick: () => send({ type: 'interrupt', paneId }) }, icon('stop')),
+        ...(!edit ? [h('button', { type: 'button', class: 'tool-button', title: t("Send immediately (⌘/Ctrl+Enter)"), 'aria-label': t("Send immediately"), disabled: !agent, onclick: () => submit('now') }, icon('bolt'))] : []),
       );
     }
     toolbar.push(
       h(
         'button',
-        { class: 'send-button', title: working ? t("Queue message (Enter)") : t("Send (Enter)"), 'aria-label': working ? t("Queue message") : t("Send"), disabled: !agent, onclick: () => submit('queue') },
-        icon('send'),
+        { type: 'submit', class: 'send-button', title: edit ? (edit.saving ? t("Saving changes…") : t("Save changes (Enter)")) : working ? t("Queue message (Enter)") : t("Send (Enter)"), 'aria-label': edit ? t("Save changes") : working ? t("Queue message") : t("Send"), disabled: !agent || Boolean(edit && (edit.saving || !available)) },
+        icon(edit ? 'edit' : 'send'),
       ),
     );
 
     if (!this.composerParts) {
       const dialog = h('div', { class: 'dialog-slot' });
       const queue = h('div', { class: 'queue-slot' });
+      const mode = h('div', { class: 'composer-mode', hidden: true });
       const chips = h('div', { class: 'chips', hidden: true });
       const toolbar = h('div', { class: 'input-toolbar' });
-      this.composerParts = { dialog, queue, chips, toolbar };
+      const form = h('form', { class: 'chat-input', action: '#', method: 'post', noValidate: true, 'aria-label': t('Message') }, mode, chips, textarea, toolbar);
+      this.composerParts = { dialog, queue, mode, chips, toolbar, form };
       this.composer.append(dialog, queue,
         h('div', { class: 'completion', role: 'listbox', hidden: true }),
-        h('div', { class: 'chat-input' }, chips, textarea, toolbar));
+        form);
     }
     const parts = this.composerParts;
+    parts.form.onsubmit = (event) => { event.preventDefault(); submit('queue'); };
+    parts.form.setAttribute('aria-busy', String(Boolean(edit?.saving)));
+    parts.mode.hidden = !edit;
+    parts.mode.replaceChildren(...(edit ? this.renderQueueEditMode(paneId, edit, available, transcript?.queue?.findIndex((item) => item.id === edit.id) ?? -1) : []));
     parts.dialog.replaceChildren(...this.renderDialog(paneId, transcript, agent));
     parts.queue.replaceChildren(...this.renderQueue(paneId, transcript));
     parts.chips.hidden = !chips.length;
@@ -584,6 +825,7 @@ export class ChatView {
     const button = h(
       'button',
       {
+        type: 'button',
         class: `chip-picker ${this.openPicker === id ? 'open' : ''}`,
         'aria-label': t("{0}: {1}", label, value ?? t("Current setting")),
         'aria-haspopup': 'listbox',
@@ -613,7 +855,7 @@ export class ChatView {
           h(
             'button',
             {
-              class: `picker-option ${option === value ? 'selected' : ''}`,
+              type: 'button', class: `picker-option ${option === value ? 'selected' : ''}`,
               role: 'option',
               'aria-selected': String(option === value),
               title: option,
@@ -704,7 +946,7 @@ export class ChatView {
   private renderQueue(paneId: string, transcript: Transcript | null): HTMLElement[] {
     const queue = transcript?.queue ?? [];
     const edit = this.queueEdits[paneId];
-    if (!queue.length && !edit) return [];
+    if (!queue.length) return [];
     const { h, icon, send } = this.host;
     return [
       h(
@@ -723,9 +965,12 @@ export class ChatView {
                 class: 'tool-button', type: 'button', title: t("Edit message"), 'aria-label': t("Edit queued message {0}", index + 1), disabled: Boolean(edit),
                 onclick: () => {
                   this.queueEdits[paneId] = { id: item.id, text: item.text, attachments: [...item.attachments], saving: false };
+                  this.closeCompletion();
+                  this.openPicker = null;
                   this.composerKey = '';
                   this.renderComposer();
-                  document.getElementById(`queue-edit-${paneId}`)?.focus();
+                  this.input?.focus();
+                  if (!this.composingElement) this.input?.setSelectionRange(item.text.length, item.text.length);
                 },
               },
               icon('edit'),
@@ -742,80 +987,33 @@ export class ChatView {
             ),
           ),
         ),
-        edit ? this.renderQueueEditor(paneId, edit, queue.some((item) => item.id === edit.id)) : null,
       ),
     ];
   }
 
-  private renderQueueEditor(paneId: string, edit: QueueEdit, available: boolean): HTMLElement {
-    const { h, send } = this.host;
+  private renderQueueEditMode(paneId: string, edit: QueueEdit, available: boolean | null, index: number): HTMLElement[] {
+    const { h } = this.host;
     const id = `queue-edit-${paneId}`;
-    const finish = () => {
-      delete this.queueEdits[paneId];
-      this.composerKey = '';
-      this.renderComposer();
-      document.getElementById(`composer-${paneId}`)?.focus();
-    };
-    const error = h('div', { id: `${id}-error`, class: 'queue-edit-error', role: 'alert', hidden: !edit.error }, edit.error);
-    const textarea = h('textarea', {
-      id, name: 'queued-message', rows: 3, value: edit.text, disabled: edit.saving,
-      required: !edit.attachments.length, 'aria-describedby': `${id}-help ${id}-error`,
-    });
-    this.trackComposition(textarea);
-    textarea.addEventListener('input', () => {
-      edit.text = textarea.value;
-      edit.error = undefined;
-      error.hidden = true;
-      textarea.setCustomValidity('');
-    });
-    const form = h(
-      'form',
-      {
-        class: 'queue-editor', action: '#', method: 'post', 'aria-labelledby': `${id}-label`,
-        onsubmit: (event: SubmitEvent) => {
-          event.preventDefault();
-          if (edit.saving || !available) return;
-          textarea.setCustomValidity(!edit.text.trim() && !edit.attachments.length ? t("Enter a message.") : '');
-          if (!textarea.reportValidity()) return;
-          edit.saving = true;
-          edit.error = undefined;
-          this.composerKey = '';
-          this.renderComposer();
-          send({ type: 'updateQueued', paneId, id: edit.id, text: edit.text });
-        },
-      },
-      h('label', { id: `${id}-label`, for: id }, t("Edit queued message")),
-      textarea,
-      h('div', { id: `${id}-help`, class: 'queue-edit-help' }, available
-        ? t("Enter for a new line, ⌘/Ctrl+Enter to save, Esc to cancel. Attachments and queue order are preserved.")
-        : t("This message has been sent or removed. Your edits are still here.")),
-      error,
-      h('div', { class: 'queue-edit-actions' },
-        h('button', { type: 'submit', disabled: edit.saving || !available }, edit.saving ? t("Saving changes…") : t("Save changes")),
-        h('button', { type: 'button', class: 'secondary', disabled: edit.saving, onclick: finish }, t("Cancel")),
-        !available ? h('button', {
-          type: 'button', class: 'secondary', disabled: edit.saving,
-          onclick: () => {
-            const draft = this.draft(paneId);
-            draft.text = [draft.text, edit.text].filter(Boolean).join('\n\n');
-            draft.attachments = [...new Set([...(draft.attachments ?? []), ...edit.attachments])];
-            this.host.persist();
-            finish();
-          },
-        }, t("Move to composer")) : null,
+    return [
+      h('div', { class: 'queue-edit-heading' },
+        h('label', { id: `${id}-label`, for: `composer-${paneId}` }, available ? t('Edit queued message {0}', index + 1) : t('Edit queued message')),
+        h('button', { type: 'button', class: 'tool-button', title: t('Cancel edit (Esc)'), 'aria-label': t('Cancel edit'), disabled: edit.saving, onclick: () => this.cancelQueueEdit(paneId) }, t('Cancel')),
       ),
-    );
-    textarea.addEventListener('keydown', (event) => {
-      if (event.isComposing || event.keyCode === 229 || this.composingElement === textarea) return;
-      if (event.key === 'Escape' && !edit.saving) {
-        event.preventDefault();
-        finish();
-      } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        form.requestSubmit();
-      }
-    });
-    return form;
+      h('div', { id: `${id}-help`, class: 'queue-edit-help' }, available === null ? t('Loading queue…') : available
+        ? t('Enter to save, Shift+Enter for a new line, Esc to cancel.')
+        : t('This message has been sent or removed. Your edits are still in the composer.')),
+      h('div', { id: `${id}-error`, class: 'queue-edit-error', role: 'alert', hidden: !edit.error }, edit.error),
+      ...(available === false ? [h('button', {
+        type: 'button', class: 'secondary', 'aria-label': t('Keep as new message'), disabled: edit.saving,
+        onclick: () => {
+          const draft = this.draft(paneId);
+          draft.text = [draft.text, edit.text].filter(Boolean).join('\n\n');
+          draft.attachments = [...new Set([...(draft.attachments ?? []), ...edit.attachments])];
+          this.host.persist();
+          this.cancelQueueEdit(paneId);
+        },
+      }, t('Keep as new message'))] : []),
+    ];
   }
 
   /** 確認畫面：把選項顯示成按鈕。沒有偵測到選項時顯示終端機畫面與按鍵。 */
@@ -917,6 +1115,10 @@ export class ChatView {
       if (!active()) return;
       event.preventDefault();
       const paneId = this.paneId!;
+      if (this.queueEdits[paneId]) {
+        this.flash(t('Attachments are preserved while editing queued messages.'));
+        return;
+      }
       const data = event.dataTransfer;
       if (!data) return;
       const uriList = data.getData('application/vnd.code.uri-list') || data.getData('text/uri-list');
@@ -1057,7 +1259,7 @@ export class ChatView {
   }
 
   private onKeyDown(event: KeyboardEvent, textarea: HTMLTextAreaElement, paneId: string, submit: (mode: 'queue' | 'now') => void): void {
-    if (event.isComposing || event.keyCode === 229 || this.composingElement === textarea) return;
+    if (event.isComposing || event.keyCode === 229 || this.composingElement === textarea || this.host.readOnly?.(paneId)) return;
     const state = this.completion;
     if (state && state.items.length) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -1082,6 +1284,11 @@ export class ChatView {
       event.preventDefault();
       const waiting = Boolean(this.transcript?.paneId === paneId && this.transcript.dialog?.length);
       submit(event.metaKey || event.ctrlKey || waiting ? 'now' : 'queue');
+      return;
+    }
+    if (event.key === 'Escape' && this.queueEdits[paneId]) {
+      event.preventDefault();
+      this.cancelQueueEdit(paneId);
       return;
     }
     if (event.key === 'Escape' && this.host.agent(paneId)?.status === 'working') {
@@ -1131,4 +1338,136 @@ function resetText(resetsAt: number | undefined): string {
   const time = date.toLocaleTimeString(getIntlLocale(), { hour: '2-digit', minute: '2-digit' });
   const day = sameDay ? '' : `${date.toLocaleDateString(getIntlLocale(), { month: 'numeric', day: 'numeric' })} `;
   return t(', resets {0}', `${day}${time}`);
+}
+
+/** 工具呼叫的一行摘要。提問工具只顯示問題文字，不顯示 JSON。 */
+function toolSummary(tool: string | undefined, text: string): string {
+  if (tool === 'AskUserQuestion' || /^\{"questions"/.test(text)) {
+    const questions = [...text.matchAll(/"question":"((?:[^"\\]|\\.)*)"/g)].map((match) => {
+      try {
+        return JSON.parse(`"${match[1]}"`) as string;
+      } catch {
+        return match[1];
+      }
+    });
+    if (questions.length) return questions.join(getIntlLocale() === 'zh-TW' ? '；' : '; ');
+  }
+  return text;
+}
+
+type ToolCategory = 'command' | 'search' | 'read' | 'edit' | 'other';
+
+function classifyTool(tool: string | undefined): ToolCategory {
+  const name = (tool ?? '').toLowerCase();
+  if (!name) return 'other';
+  if (
+    name === 'bash' ||
+    name === 'shell' ||
+    name === 'exec_command' ||
+    name === 'run_command' ||
+    name === 'local_shell_call' ||
+    name === 'write_stdin'
+  ) {
+    return 'command';
+  }
+  if (
+    name.includes('search') ||
+    name.includes('grep') ||
+    name.includes('glob') ||
+    name.includes('find') ||
+    name.includes('web') ||
+    name.includes('fetch')
+  ) {
+    return 'search';
+  }
+  if (name.includes('read') || name.includes('view') || name.includes('cat') || name.includes('list')) {
+    return 'read';
+  }
+  if (
+    name.includes('edit') ||
+    name.includes('write') ||
+    name.includes('patch') ||
+    name.includes('replace') ||
+    name.includes('create')
+  ) {
+    return 'edit';
+  }
+  return 'other';
+}
+
+function toolIconName(tool: string | undefined): string {
+  switch (classifyTool(tool)) {
+    case 'command':
+      return 'terminal';
+    case 'search':
+      return 'search';
+    case 'read':
+      return 'file';
+    case 'edit':
+      return 'edit';
+    default:
+      return 'tool';
+  }
+}
+
+function groupIconName(tools: (string | undefined)[]): string {
+  const cats = new Set(tools.map(classifyTool));
+  if (cats.has('command')) return 'terminal';
+  if (cats.has('search')) return 'search';
+  if (cats.has('edit')) return 'edit';
+  if (cats.has('read')) return 'file';
+  return 'terminal';
+}
+
+function categoryActionLabel(cat: ToolCategory): string {
+  switch (cat) {
+    case 'command':
+      return t('Ran commands');
+    case 'search':
+      return t('Searched');
+    case 'read':
+      return t('Read files');
+    case 'edit':
+      return t('Edited files');
+    default:
+      return t('Used tools');
+  }
+}
+
+function commandGroupLabel(messages: ChatMessage[]): string {
+  const labels: string[] = [];
+  for (const msg of messages) {
+    const label = categoryActionLabel(classifyTool(msg.tool));
+    if (!labels.includes(label)) labels.push(label);
+  }
+  const summary = labels.join(' ') || t('Ran commands');
+  if (messages.length === 1) {
+    const detail = toolSummary(messages[0].tool, messages[0].text);
+    return detail ? t('{0} “{1}”', summary, detail) : t('{0} · {1} step', summary, 1);
+  }
+  return t('{0} · {1} steps', summary, messages.length);
+}
+
+export function formatDurationMs(ms: number): string {
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+}
+
+function turnDurationText(userTimestamp: number | undefined, items: { message: ChatMessage }[]): string | undefined {
+  let start = userTimestamp;
+  let end: number | undefined;
+  for (const { message } of items) {
+    const t0 = message.timestamp;
+    const t1 = message.endTimestamp ?? message.timestamp;
+    if (t0 !== undefined && (start === undefined || t0 < start)) start = t0;
+    if (t1 !== undefined && (end === undefined || t1 > end)) end = t1;
+  }
+  if (start === undefined || end === undefined || end < start) return undefined;
+  return formatDurationMs(end - start);
 }

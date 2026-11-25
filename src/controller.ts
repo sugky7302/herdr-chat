@@ -1,10 +1,17 @@
-import { t } from './l10n.ts';
-import * as vscode from 'vscode';
-import * as path from 'node:path';
 import { execFile } from 'node:child_process';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { promisify } from 'node:util';
+import * as vscode from 'vscode';
+import { effortLabel, menuKind, nextKey, normalizeLabel, parseDialog, parseMenu, parsePrompt, type MenuKind } from './codexMenu';
+import { CollaborationService } from './collaboration/service';
+import type { AgentIdentity, CollaborationTask, LivePane } from './collaboration/types';
+import { Commands } from './commands';
 import { HerdrClient, HerdrError, HerdrEvents, resolveSocketPath } from './herdr/client';
 import type { PaneInfo, Snapshot, WorktreeList } from './herdr/types';
+import { t } from './l10n.ts';
+import { ClaudeMemClient, memoryFingerprint } from './memory/claudeMem';
 import {
   agentName,
   buildShellCommand,
@@ -16,14 +23,7 @@ import {
   type AgentPreset,
 } from './presets';
 import type { AgentView, CompletionItem, FromWebview, ProjectState, QueuedView, TabView, ToWebview, Transcript, WorktreeView } from './shared';
-import { CollaborationService } from './collaboration/service';
-import type { AgentIdentity, CollaborationTask, LivePane } from './collaboration/types';
-import { ClaudeMemClient, memoryFingerprint } from './memory/claudeMem';
-import * as fs from 'node:fs/promises';
-import * as os from 'node:os';
-import { Commands } from './commands';
 import { TranscriptSource } from './transcript/source';
-import { effortLabel, menuKind, nextKey, normalizeLabel, parseDialog, parseMenu, parsePrompt, type MenuKind } from './codexMenu';
 
 const run = promisify(execFile);
 
@@ -524,15 +524,17 @@ export class Controller implements vscode.Disposable {
           .filter((pane) => pane.tab_id === tab.tab_id)
           .map((pane) => {
             const agent = agentsByPane.get(pane.pane_id) ?? pane;
-            const kind = agent.agent ?? null;
-            const presetId = memory[pane.pane_id]?.presetId ?? presetForKind(presets, kind)?.id ?? null;
+            const remembered = memory[pane.pane_id];
+            const preset = presets.find((item) => item.id === remembered?.presetId) ?? presetForKind(presets, agent.agent ?? null);
+            const kind = agent.agent ?? preset?.kind ?? (remembered?.presetId === 'deepseek' ? 'dsh-tui' : null);
+            const presetId = remembered?.presetId ?? preset?.id ?? null;
             return {
               paneId: pane.pane_id,
               label: pane.label || null,
               name: agent.name ?? null,
               kind: agent.display_agent ?? kind,
               presetId,
-              status: kind ? (agent.agent_status ?? 'unknown') : 'shell',
+              status: kind ? (agent.agent_status ?? 'idle') : 'shell',
               title: agent.terminal_title_stripped || agent.title || pane.label || '',
               focused: pane.focused,
             };
@@ -703,11 +705,11 @@ export class Controller implements vscode.Disposable {
       });
     } else {
       await this.waitForShell(paneId);
-      await this.client.request('pane.send_input', {
-        pane_id: paneId,
-        text: buildShellCommand(preset, model, effort),
-        keys: ['enter'],
-      });
+      if (preset.id === 'deepseek') {
+        await this.syncDshPrefs(model, effort);
+      }
+      await this.sendShellLine(paneId, buildShellCommand(preset, model, effort));
+      await this.waitForCustomAgent(paneId);
     }
     await this.refresh();
     return paneId;
@@ -762,6 +764,46 @@ export class Controller implements vscode.Disposable {
       .catch(() => sleep(800));
   }
 
+  /** 送出一行文字並按 Enter。部分 herdr 版本不接受同時帶 text 與 keys 的 pane.send_input，因此拆開或自動退回。 */
+  private async sendShellLine(paneId: string, text: string): Promise<void> {
+    try {
+      await this.client.request('pane.send_text', { pane_id: paneId, text });
+      await this.client.request('pane.send_keys', { pane_id: paneId, keys: ['enter'] });
+    } catch {
+      await this.client.request('pane.send_input', { pane_id: paneId, text, keys: ['enter'] });
+    }
+  }
+
+  /** 自訂指令啟動前，將選擇的模型與 effort 寫入 ~/.dsh-tui 偏好檔，讓 dsh-tui 啟動時直接套用。 */
+  private async syncDshPrefs(model?: string, effort?: string): Promise<void> {
+    if (!model && !effort) return;
+    const dir = path.join(os.homedir(), '.dsh-tui');
+    await fs.mkdir(dir, { recursive: true }).catch(() => undefined);
+    if (model) {
+      const slash = model.indexOf('/');
+      const provider = slash >= 0 ? model.slice(0, slash) : 'deepseek-official';
+      const id = slash >= 0 ? model.slice(slash + 1) : model;
+      await fs.writeFile(path.join(dir, 'model.json'), JSON.stringify({ provider, model: id }, null, 2)).catch(() => undefined);
+    }
+    if (effort) {
+      await fs.writeFile(path.join(dir, 'effort.json'), JSON.stringify({ effort }, null, 2)).catch(() => undefined);
+    }
+  }
+
+  /** 等待自訂指令啟動的 agent（例如 dsh-tui 透過 report-agent 回報狀態），最多等待 8 秒。 */
+  private async waitForCustomAgent(paneId: string): Promise<void> {
+    const end = Date.now() + 8000;
+    while (Date.now() < end) {
+      const snap = await this.client.snapshot().catch(() => null);
+      if (snap) {
+        this.snapshot = snap;
+        const found = snap.panes.find((p) => p.pane_id === paneId)?.agent ?? snap.agents.find((a) => a.pane_id === paneId)?.agent;
+        if (found) return;
+      }
+      await sleep(300);
+    }
+  }
+
   /**
    * 送出訊息。模型或 effort 與上次不同時，先送 agent 自己的切換指令。
    * 這與 Claude 及 Codex 的 VS Code 擴充功能相同：選單的設定在下一則訊息生效。
@@ -790,6 +832,7 @@ export class Controller implements vscode.Disposable {
       this.assertPlannerWritable(paneId);
       await this.client.request('pane.send_input', { pane_id: paneId, text, keys: ['enter'] });
       await this.recordDeliveredMessage(task?.id, paneId, text);
+      await this.sendShellLine(paneId, text);
       this.scheduleRefresh(300);
       return;
     }
@@ -901,6 +944,7 @@ export class Controller implements vscode.Disposable {
       // herdr 沒有辨識出 agent（例如自訂指令），直接把文字送進終端機。
       await this.client.request('pane.send_input', { pane_id: paneId, text, keys: ['enter'] });
       await this.recordDeliveredMessage(task?.id, paneId, text);
+      await this.sendShellLine(paneId, text);
       return;
     }
     if (preset?.switchStyle === 'codex-menu' && (model || effort)) {

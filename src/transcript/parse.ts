@@ -62,12 +62,30 @@ function summarizeToolInput(input: unknown): string {
   return clip(JSON.stringify(value), MAX_TOOL_SUMMARY);
 }
 
+function parseTime(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string' && value) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function withTime(message: ChatMessage, timestamp: number | undefined): ChatMessage {
+  return timestamp !== undefined ? { ...message, timestamp } : message;
+}
+
 function pushMessage(messages: ChatMessage[], message: ChatMessage): void {
   if (!message.text.trim() && message.role !== 'tool') return;
   const last = messages[messages.length - 1];
   // 同一回合連續的文字區塊合併成一個泡泡。
   if (last && last.role === message.role && message.role === 'assistant') {
     last.text += '\n\n' + message.text;
+    const end = message.endTimestamp ?? message.timestamp;
+    if (end !== undefined) {
+      if (last.timestamp === undefined) last.timestamp = end;
+      else if (end > last.timestamp) last.endTimestamp = end;
+    }
     return;
   }
   messages.push(message);
@@ -116,19 +134,20 @@ export function parseClaude(text: string): ParsedTranscript {
   const usageById = new Map<string, any>();
   let lastUsage: any;
   /** 加入使用者訊息。Claude Code 有時把同一則訊息記成一般訊息與排隊指令兩筆，所以略過最近出現過的相同內容。 */
-  const pushUser = (raw: string) => {
+  const pushUser = (raw: string, ts?: number) => {
     const text = stripPasteTags(raw);
     if (!text) return;
     const recent = messages.slice(-12).some((item) => item.role === 'user' && item.text === text);
-    if (!recent) pushMessage(messages, { role: 'user', text });
+    if (!recent) pushMessage(messages, withTime({ role: 'user', text }, ts));
   };
   eachJson(text, (entry) => {
     if (entry.isSidechain) return;
+    const ts = parseTime(entry.timestamp);
     // agent 工作中送出的訊息記成 queued_command 附件，而不是一般的使用者訊息。
     if (entry.type === 'attachment' && entry.attachment?.type === 'queued_command') {
       const prompt = entry.attachment.prompt;
       const body = typeof prompt === 'string' ? prompt : Array.isArray(prompt) ? prompt.map((p: any) => p?.text ?? '').join('\n') : '';
-      if (entry.attachment.commandMode === 'prompt' || entry.attachment.commandMode === undefined) pushUser(body);
+      if (entry.attachment.commandMode === 'prompt' || entry.attachment.commandMode === undefined) pushUser(body, ts);
       return;
     }
     const message = entry.message;
@@ -138,11 +157,11 @@ export function parseClaude(text: string): ParsedTranscript {
       if (typeof content === 'string') {
         const command = slashCommand(content);
         if (command) {
-          pushMessage(messages, { role: 'notice', text: command });
+          pushMessage(messages, withTime({ role: 'notice', text: command }, ts));
           const effortMatch = /^\/effort\s+(\S+)/.exec(command);
           if (effortMatch) effort = effortMatch[1];
         } else if (!isInjectedUserText(content)) {
-          pushUser(content);
+          pushUser(content, ts);
         }
         return;
       }
@@ -151,7 +170,11 @@ export function parseClaude(text: string): ParsedTranscript {
           .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
           .map((part: any) => part.text as string)
           .filter((part: string) => !isInjectedUserText(part));
-        if (texts.length) pushUser(texts.join('\n\n'));
+        if (texts.length) pushUser(texts.join('\n\n'), ts);
+        else if (ts !== undefined && messages.length && messages[messages.length - 1].role !== 'user') {
+          const prev = messages[messages.length - 1];
+          if (prev.timestamp !== undefined && ts > prev.timestamp) prev.endTimestamp = ts;
+        }
       }
       return;
     }
@@ -164,9 +187,9 @@ export function parseClaude(text: string): ParsedTranscript {
       const content = Array.isArray(message.content) ? message.content : [];
       for (const part of content) {
         if (part?.type === 'text' && typeof part.text === 'string') {
-          pushMessage(messages, { role: 'assistant', text: part.text });
+          pushMessage(messages, withTime({ role: 'assistant', text: part.text }, ts));
         } else if (part?.type === 'tool_use') {
-          pushMessage(messages, { role: 'tool', tool: String(part.name ?? 'tool'), text: summarizeToolInput(part.input) });
+          pushMessage(messages, withTime({ role: 'tool', tool: String(part.name ?? 'tool'), text: summarizeToolInput(part.input) }, ts));
         }
       }
     }
@@ -228,18 +251,24 @@ export function parseCodex(text: string): ParsedTranscript {
       return;
     }
     if (entry.type !== 'response_item') return;
+    const ts = parseTime(entry.timestamp);
     if (payload.type === 'message') {
       const body = codexText(payload.content);
       if (payload.role === 'user') {
-        if (!isInjectedUserText(body)) pushMessage(messages, { role: 'user', text: body });
+        if (!isInjectedUserText(body)) pushMessage(messages, withTime({ role: 'user', text: body }, ts));
       } else if (payload.role === 'assistant') {
-        pushMessage(messages, { role: 'assistant', text: body });
+        pushMessage(messages, withTime({ role: 'assistant', text: body }, ts));
       }
       return;
     }
     if (payload.type === 'function_call' || payload.type === 'custom_tool_call' || payload.type === 'local_shell_call') {
       const input = payload.arguments ?? payload.input ?? payload.action;
-      pushMessage(messages, { role: 'tool', tool: String(payload.name ?? 'shell'), text: summarizeToolInput(input) });
+      pushMessage(messages, withTime({ role: 'tool', tool: String(payload.name ?? 'shell'), text: summarizeToolInput(input) }, ts));
+      return;
+    }
+    if (ts !== undefined && messages.length && messages[messages.length - 1].role !== 'user') {
+      const prev = messages[messages.length - 1];
+      if (prev.timestamp !== undefined && ts > prev.timestamp) prev.endTimestamp = ts;
     }
   });
   return finish(messages, model, effort, usage);
@@ -248,6 +277,11 @@ export function parseCodex(text: string): ParsedTranscript {
 /** Claude Code 把專案路徑中非英數字元換成 - 當作資料夾名稱。 */
 export function claudeProjectDirName(cwd: string): string {
   return cwd.replace(/[^A-Za-z0-9]/g, '-');
+}
+
+/** 將工作目錄轉成 dsh 的資料夾名稱（例如 /Users/a/b → --Users-a-b--）。 */
+export function dshWorkspaceDirName(cwd: string): string {
+  return `--${cwd.replace(/^\/+|\/+$/g, '').replace(/[^A-Za-z0-9]/g, '-')}--`;
 }
 
 /** 從 Antigravity 的 `<USER_REQUEST>…</USER_REQUEST>` 取出使用者輸入的文字。 */
@@ -267,9 +301,11 @@ export function parseAgy(text: string): ParsedTranscript {
   let hasUsage = false;
 
   eachJson(text, (entry) => {
+    const ts = parseTime(entry.created_at ?? entry.completed_at);
+    const endTs = parseTime(entry.completed_at);
     if (entry.source === 'USER_EXPLICIT' && entry.type === 'USER_INPUT' && typeof entry.content === 'string') {
       const body = extractAgyUserRequest(entry.content);
-      if (body && !isInjectedUserText(body)) pushMessage(messages, { role: 'user', text: body });
+      if (body && !isInjectedUserText(body)) pushMessage(messages, withTime({ role: 'user', text: body }, ts));
       return;
     }
     if (entry.source === 'MODEL' && entry.type === 'PLANNER_RESPONSE') {
@@ -290,16 +326,39 @@ export function parseAgy(text: string): ParsedTranscript {
       if (Array.isArray(entry.tool_calls)) {
         for (const call of entry.tool_calls) {
           if (!call || typeof call !== 'object') continue;
-          pushMessage(messages, {
-            role: 'tool',
-            tool: String(call.name ?? 'tool'),
-            text: summarizeToolInput(call.args ?? call.input),
-          });
+          pushMessage(
+            messages,
+            withTime(
+              {
+                role: 'tool',
+                tool: String(call.name ?? 'tool'),
+                text: summarizeToolInput(call.args ?? call.input),
+                ...(endTs && ts && endTs > ts ? { endTimestamp: endTs } : {}),
+              },
+              ts,
+            ),
+          );
         }
       }
       if (typeof entry.content === 'string' && entry.content.trim()) {
-        pushMessage(messages, { role: 'assistant', text: entry.content });
+        pushMessage(
+          messages,
+          withTime(
+            {
+              role: 'assistant',
+              text: entry.content,
+              ...(endTs && ts && endTs > ts ? { endTimestamp: endTs } : {}),
+            },
+            ts,
+          ),
+        );
       }
+      return;
+    }
+    if (ts !== undefined && messages.length && messages[messages.length - 1].role !== 'user') {
+      const prev = messages[messages.length - 1];
+      const latest = endTs ?? ts;
+      if (prev.timestamp !== undefined && latest > prev.timestamp) prev.endTimestamp = latest;
     }
   });
 
@@ -307,6 +366,106 @@ export function parseAgy(text: string): ParsedTranscript {
     ? {
         contextTokens,
         contextWindow: 1_000_000,
+        totalTokens,
+        outputTokens,
+      }
+    : undefined;
+  return finish(messages, model, effort, usage);
+}
+
+/** 移除 dsh-tui 回覆第一行狀態列（`⏵ 正在做的事`）。 */
+function cleanDshText(text: string): string {
+  return text.replace(/^\s*⏵\s+[^\n]*\n+/, '').trim();
+}
+
+export function parseDsh(text: string): ParsedTranscript {
+  const messages: ChatMessage[] = [];
+  let model: string | undefined;
+  let effort: string | undefined;
+  let contextWindow = 1_048_576;
+  let contextTokens = 0;
+  let totalTokens = 0;
+  let outputTokens = 0;
+  let hasUsage = false;
+
+  eachJson(text, (entry) => {
+    const data = entry.data ?? {};
+    const ts = parseTime(entry.time);
+    if (entry.type === 'model/selection') {
+      if (typeof data.model === 'string' && data.model) model = data.model;
+      if (typeof data.reasoningEffort === 'string' && data.reasoningEffort) effort = data.reasoningEffort;
+      return;
+    }
+    if (entry.type === 'request/header') {
+      const cfg = data.header?.config;
+      if (typeof cfg?.model === 'string' && cfg.model) model = cfg.model;
+      if (typeof cfg?.reasoningEffort === 'string' && cfg.reasoningEffort) effort = cfg.reasoningEffort;
+      return;
+    }
+    if (entry.type === 'request/context') {
+      if (typeof data.model === 'string' && data.model) model = data.model;
+      if (typeof data.contextWindow === 'number' && data.contextWindow > 0) contextWindow = data.contextWindow;
+      return;
+    }
+    if (entry.type === 'user/message') {
+      const content = Array.isArray(data.content) ? data.content : [];
+      const texts = content
+        .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
+        .map((part: any) => stripPasteTags(part.text as string))
+        .filter((part: string) => part && !isInjectedUserText(part));
+      if (texts.length) pushMessage(messages, withTime({ role: 'user', text: texts.join('\n\n') }, ts));
+      return;
+    }
+    if (entry.type === 'tool/call') {
+      pushMessage(
+        messages,
+        withTime(
+          {
+            role: 'tool',
+            tool: String(data.name ?? 'tool'),
+            text: summarizeToolInput(data.arguments ?? data.input),
+          },
+          ts,
+        ),
+      );
+      return;
+    }
+    if (entry.type === 'assistant/message') {
+      const msg = data.message ?? {};
+      if (typeof msg.source?.model === 'string' && msg.source.model) model = msg.source.model;
+      const u = data.usage;
+      if (u && typeof u === 'object') {
+        const stepTotal =
+          typeof u.totalTokens === 'number'
+            ? u.totalTokens
+            : (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0) + (u.outputTokens ?? 0);
+        const out = typeof u.outputTokens === 'number' ? u.outputTokens : 0;
+        if (stepTotal > 0 || out > 0) {
+          hasUsage = true;
+          contextTokens = stepTotal;
+          totalTokens += stepTotal;
+          outputTokens += out;
+        }
+      }
+      const content = Array.isArray(msg.content) ? msg.content : [];
+      for (const part of content) {
+        if (part?.type === 'text' && typeof part.text === 'string') {
+          const cleaned = cleanDshText(part.text);
+          if (cleaned) pushMessage(messages, withTime({ role: 'assistant', text: cleaned }, ts));
+        }
+      }
+      return;
+    }
+    if (ts !== undefined && messages.length && messages[messages.length - 1].role !== 'user') {
+      const prev = messages[messages.length - 1];
+      if (prev.timestamp !== undefined && ts > prev.timestamp) prev.endTimestamp = ts;
+    }
+  });
+
+  const usage: Usage | undefined = hasUsage
+    ? {
+        contextTokens,
+        contextWindow,
         totalTokens,
         outputTokens,
       }

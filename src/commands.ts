@@ -91,7 +91,12 @@ export class Commands {
     if (cached && Date.now() - cached.at < 30000) return cached.entries;
     const home = this.skillOptions.homeDir ?? os.homedir();
     const env = this.skillOptions.env ?? process.env;
-    const inventory = await scanSkills(root, { ...this.skillOptions, agents: [kind] });
+    const roots = this.skillOptions.roots ?? (kind === 'dsh' || kind === 'dsh-tui' ? [
+      { path: path.join(root, '.github', 'skills'), agent: kind, scope: 'project' as const },
+      { path: path.join(root, '.agents', 'skills'), agent: kind, scope: 'project' as const },
+      { path: path.join(home, '.agents', 'skills'), agent: kind, scope: 'user' as const },
+    ] : undefined);
+    const inventory = await scanSkills(root, { ...this.skillOptions, roots, agents: [kind] });
     // A Codex skill is inserted as $name, even when selected from this / chooser.
     // setRangeText replaces the complete trigger/query, preserving its native invocation.
     let entries: CommandEntry[] = inventory.skills.filter((skill) => skill.invocation)

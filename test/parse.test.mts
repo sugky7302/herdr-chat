@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { claudeProjectDirName, parseAgy, parseClaude, parseCodex } from '../src/transcript/parse.ts';
+import { claudeProjectDirName, dshWorkspaceDirName, parseAgy, parseClaude, parseCodex, parseDsh } from '../src/transcript/parse.ts';
 
 const lines = (...items: unknown[]) => items.map((item) => JSON.stringify(item)).join('\n');
 
@@ -145,4 +145,68 @@ test('Antigravity：解析 USER_REQUEST、工具呼叫、回覆、模型、effor
     totalTokens: 3050 + 3620,
     outputTokens: 170,
   });
+});
+
+test('DeepSeek (dsh-tui)：解析 model/selection、user/message、tool/call、assistant/message 與 token 用量', () => {
+  const text = lines(
+    { type: 'session', version: 4, id: '4866e21e-7ee6-425b-8b9d-c57ef7893e04' },
+    { type: 'model/selection', seq: 3, data: { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'max' } },
+    {
+      type: 'user/message',
+      seq: 9,
+      data: { role: 'user', content: [{ type: 'text', text: '請用 herdr 讀取 wE:p1' }] },
+    },
+    { type: 'request/context', seq: 15, data: { provider: 'deepseek-official', model: 'deepseek-flash', contextWindow: 1048576 } },
+    {
+      type: 'assistant/message',
+      seq: 21,
+      data: {
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'reasoning', text: '先檢查指令' },
+            { type: 'text', text: '⏵ 查 herdr 用法\n\n我先執行指令檢查。' },
+          ],
+          source: { model: 'deepseek-flash' },
+        },
+        usage: { inputTokens: 16000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 16200 },
+      },
+    },
+    {
+      type: 'tool/call',
+      seq: 22,
+      data: { name: 'bash', arguments: '{"command":"herdr --help","description":"檢查 herdr 指令"}' },
+    },
+    {
+      type: 'assistant/message',
+      seq: 30,
+      data: {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '⏵ 整理總結\n\n已完成讀取與整理。' }],
+          source: { model: 'deepseek-flash' },
+        },
+        usage: { inputTokens: 500, outputTokens: 300, cacheReadTokens: 16000, cacheWriteTokens: 0, totalTokens: 16800 },
+      },
+    },
+  );
+  const parsed = parseDsh(text);
+  assert.equal(parsed.model, 'deepseek-flash');
+  assert.equal(parsed.effort, 'max');
+  assert.deepEqual(parsed.messages, [
+    { role: 'user', text: '請用 herdr 讀取 wE:p1' },
+    { role: 'assistant', text: '我先執行指令檢查。' },
+    { role: 'tool', tool: 'bash', text: '檢查 herdr 指令' },
+    { role: 'assistant', text: '已完成讀取與整理。' },
+  ]);
+  assert.deepEqual(parsed.usage, {
+    contextTokens: 16800,
+    contextWindow: 1_048_576,
+    totalTokens: 16200 + 16800,
+    outputTokens: 500,
+  });
+  assert.equal(
+    dshWorkspaceDirName('/Users/user/Documents/1-Project/2209-iCloud-UMC/main'),
+    '--Users-user-Documents-1-Project-2209-iCloud-UMC-main--',
+  );
 });

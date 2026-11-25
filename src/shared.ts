@@ -68,6 +68,10 @@ export interface ChatMessage {
   text: string;
   /** 工具呼叫的名稱，例如 Bash。 */
   tool?: string;
+  /** 訊息開始時間（Unix 毫秒）。 */
+  timestamp?: number;
+  /** 訊息結束時間（Unix 毫秒，合併多筆訊息時使用）。 */
+  endTimestamp?: number;
 }
 
 export interface Usage {
@@ -104,7 +108,7 @@ export interface QueuedView {
 
 export interface Transcript {
   paneId: string;
-  source: 'claude' | 'codex' | 'agy' | 'terminal';
+  source: 'claude' | 'codex' | 'agy' | 'dsh' | 'terminal';
   messages: ChatMessage[];
   model?: string;
   effort?: string;
