@@ -18,6 +18,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('herdr.refresh', () => provider.controller.refresh()),
     vscode.commands.registerCommand('herdr.history', () => provider.post({ type: 'navigate', view: 'history' })),
     vscode.commands.registerCommand('herdr.newAgent', () => provider.post({ type: 'navigate', view: 'newAgent' })),
+    vscode.commands.registerCommand('herdr.nextAgent', () => provider.post({ type: 'cycleAgent', delta: 1 })),
+    vscode.commands.registerCommand('herdr.previousAgent', () => provider.post({ type: 'cycleAgent', delta: -1 })),
     vscode.commands.registerCommand('herdr.settings', () => provider.openSettings()),
     vscode.commands.registerCommand('herdr.enableClaudeUsage', async () => {
       const choice = await vscode.window.showInformationMessage(

@@ -125,6 +125,7 @@ export type ToWebview =
   | { type: 'taskOperation'; tabId: string; operationId: string; kind: 'memory' | 'handoff' | 'delegate' | 'planner' | 'checkpoint' | 'answer'; error?: string; memoryId?: number; checkpoint?: string }
   | { type: 'transcript'; transcript: Transcript }
   | { type: 'navigate'; view: 'history' | 'newAgent' | 'settings' }
+  | { type: 'cycleAgent'; delta: 1 | -1 }
   | { type: 'settingsState'; requestId: string; snapshot?: SettingsSnapshot; error?: string }
   | { type: 'settingsOperation'; operationId: string; snapshot?: SettingsSnapshot; error?: string; output?: string }
   | { type: 'openedPane'; paneId: string }

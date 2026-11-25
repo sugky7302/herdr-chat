@@ -107,6 +107,9 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
       else if (message.view === 'settings') go({ view: 'settings' });
       else go({ view: 'newAgent', tabId: currentTabId() });
       break;
+    case 'cycleAgent':
+      cycleAgent(message.delta);
+      break;
     case 'settingsState':
     case 'settingsOperation':
       settingsView.receive(message);
@@ -155,6 +158,24 @@ function findAgent(paneId: string): { tab: TabView; agent: AgentView } | undefin
     if (agent) return { tab, agent };
   }
   return undefined;
+}
+
+/**
+ * 切換到同一個 tab 中的下一個或上一個 agent，到底會繞回開頭。
+ * 不在 pane 頁面時，下一個是第一個 agent，上一個是最後一個 agent。
+ */
+function cycleAgent(delta: 1 | -1): void {
+  if (!state || route?.view === 'settings') return;
+  const tabId = currentTabId() ?? (state.tabs.find((tab) => tab.focused) ?? state.tabs[0])?.tabId;
+  const agents = (tabId ? findTab(tabId)?.agents : undefined) ?? [];
+  if (!agents.length) return;
+  const currentPane = route?.view === 'pane' ? route.paneId : null;
+  const index = currentPane ? agents.findIndex((agent) => agent.paneId === currentPane) : -1;
+  const next = index < 0 ? (delta > 0 ? 0 : agents.length - 1) : (index + delta + agents.length) % agents.length;
+  const paneId = agents[next].paneId;
+  if (currentPane === paneId) return;
+  chat.clearTranscript();
+  go({ view: 'pane', paneId });
 }
 
 function currentTabId(): string | null {

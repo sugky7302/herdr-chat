@@ -56,6 +56,14 @@
         "icon": "$(add)"
       },
       {
+        "command": "herdr.nextAgent",
+        "title": "%herdr.nextAgent.title%"
+      },
+      {
+        "command": "herdr.previousAgent",
+        "title": "%herdr.previousAgent.title%"
+      },
+      {
         "command": "herdr.enableClaudeUsage",
         "title": "%herdr.enableClaudeUsage.title%"
       },
@@ -67,6 +75,20 @@
         "command": "herdr.settings",
         "title": "%herdr.settings.title%",
         "icon": "$(gear)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "herdr.nextAgent",
+        "key": "ctrl+alt+]",
+        "mac": "cmd+alt+]",
+        "when": "focusedView == herdr.chat"
+      },
+      {
+        "command": "herdr.previousAgent",
+        "key": "ctrl+alt+[",
+        "mac": "cmd+alt+[",
+        "when": "focusedView == herdr.chat"
       }
     ],
     "menus": {

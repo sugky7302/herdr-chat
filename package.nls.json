@@ -3,6 +3,8 @@
   "herdr.refresh.title": "herdr: Refresh",
   "herdr.history.title": "herdr: History (Switch Tab)",
   "herdr.newAgent.title": "herdr: Add Agent",
+  "herdr.nextAgent.title": "herdr: Next Agent in Tab",
+  "herdr.previousAgent.title": "herdr: Previous Agent in Tab",
   "herdr.enableClaudeUsage.title": "herdr: Enable Claude Usage Display",
   "herdr.disableClaudeUsage.title": "herdr: Disable Claude Usage Display",
   "herdr.claudeMemUrl.description": "Claude-mem worker URL. Leave empty to use CLAUDE_MEM_WORKER_URL, worker host/port environment variables, or ~/.claude-mem/settings.json. Saving existing text does not call a model.",

@@ -3,6 +3,8 @@
   "herdr.refresh.title": "herdr: 重新整理",
   "herdr.history.title": "herdr: 歷史紀錄（切換 tab）",
   "herdr.newAgent.title": "herdr: 新增 agent",
+  "herdr.nextAgent.title": "herdr: 切換到 tab 中的下一個 agent",
+  "herdr.previousAgent.title": "herdr: 切換到 tab 中的上一個 agent",
   "herdr.enableClaudeUsage.title": "herdr: 啟用 Claude 用量顯示",
   "herdr.disableClaudeUsage.title": "herdr: 停用 Claude 用量顯示",
   "herdr.claudeMemUrl.description": "Claude-mem worker URL。留空沿用 CLAUDE_MEM_WORKER_URL、worker host/port 環境變數或 ~/.claude-mem/settings.json。保存既有文字不呼叫模型。",
