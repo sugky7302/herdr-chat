@@ -35,4 +35,5 @@ test('模型短名稱', () => {
   assert.equal(shortModel('claude-sonnet-4-5-20250929'), 'sonnet-4.5');
   assert.equal(shortModel('opus'), 'opus');
   assert.equal(shortModel('gpt-6.1-sol'), 'gpt-6.1-sol');
+  assert.equal(shortModel('gemini-4-argon-medium'), 'gemini-4-argon');
 });

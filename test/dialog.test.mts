@@ -73,6 +73,25 @@ test('解析沒有編號的選項（Claude 信任畫面）', () => {
 
 import { readFileSync } from 'node:fs';
 import { parsePrompt } from '../src/codexMenu.ts';
+import { parseStatus } from '../src/claudeUsage.ts';
+
+test('解析 Claude statusline 用量 JSON（5 小時、7 天與上下文上限）', () => {
+  const json = JSON.stringify({
+    session_id: '6abd340a-b4aa-4fa1-b667-8c717aa962d4',
+    context_window: { context_window_size: 1000000, used_percentage: 38 },
+    rate_limits: {
+      five_hour: { used_percentage: 100, resets_at: 1795608600 },
+      seven_day: { used_percentage: 21, resets_at: 1795856400 },
+    },
+  });
+  assert.deepEqual(parseStatus(json, 12345), {
+    fiveHour: { usedPercent: 100, resetsAt: 1795608600 },
+    sevenDay: { usedPercent: 21, resetsAt: 1795856400 },
+    contextUsedPercent: 38,
+    contextWindow: 1000000,
+    updatedAt: 12345,
+  });
+});
 
 test('解析 Claude 提問畫面：標題、問題、說明與分隔線後的選項', () => {
   const screen = readFileSync(new URL('./fixtures-ask-screen.txt', import.meta.url), 'utf8');

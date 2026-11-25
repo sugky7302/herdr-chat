@@ -34,6 +34,14 @@ interface CompletionState {
   requestId: number;
 }
 
+interface QueueEdit {
+  id: number;
+  text: string;
+  attachments: string[];
+  saving: boolean;
+  error?: string;
+}
+
 const SCREEN_KEYS: { label: string; keys: string[]; title: string }[] = [
   { label: '↑', keys: ['up'], title: '上' },
   { label: '↓', keys: ['down'], title: '下' },
@@ -52,11 +60,16 @@ export class ChatView {
   readonly screenOpen = new Set<string>();
   /** 已送出、還沒出現在紀錄中的訊息。 */
   private pending: Record<string, { text: string; at: number }[]> = {};
+  private queueEdits: Record<string, QueueEdit> = {};
   private paneId: string | null = null;
   private messages: HTMLElement | null = null;
   private composer: HTMLElement | null = null;
   private scrollButton: HTMLElement | null = null;
   private composerKey = '';
+  private bodyKey = '';
+  private input: HTMLTextAreaElement | null = null;
+  private composingElement: HTMLTextAreaElement | null = null;
+  private composerParts: { dialog: HTMLElement; queue: HTMLElement; chips: HTMLElement; toolbar: HTMLElement } | null = null;
   private completion: CompletionState | null = null;
   private completionTimer: number | undefined;
   private nextRequestId = 1;
@@ -77,6 +90,10 @@ export class ChatView {
     }
     this.paneId = paneId;
     this.composerKey = '';
+    this.bodyKey = '';
+    this.input = null;
+    this.composingElement = null;
+    this.composerParts = null;
     const previous = this.messages;
     const keepScroll = previous && !this.stickToBottom ? previous.scrollTop : null;
     this.messages = h('div', { class: 'messages', role: 'log', 'aria-live': 'polite' });
@@ -94,8 +111,18 @@ export class ChatView {
     this.composer = h('div', { class: 'composer' });
     const wrap = h('div', { class: 'messages-wrap' }, this.messages, this.scrollButton);
     this.renderBody();
-    if (keepScroll !== null) this.messages.scrollTop = keepScroll;
+    const messages = this.messages;
+    requestAnimationFrame(() => {
+      if (this.messages !== messages || !messages.isConnected) return;
+      if (this.stickToBottom) this.scrollToBottom();
+      else if (keepScroll !== null) messages.scrollTop = keepScroll;
+    });
     return [wrap, this.composer];
+  }
+
+  /** 更新目前窗格的內容，不重建聊天區。 */
+  refresh(): void {
+    this.renderBody();
   }
 
   setTranscript(next: Transcript): void {
@@ -118,6 +145,21 @@ export class ChatView {
 
   clearTranscript(): void {
     this.transcript = null;
+  }
+
+  finishQueueEdit(paneId: string, id: number, error?: string): void {
+    const edit = this.queueEdits[paneId];
+    if (!edit || edit.id !== id) return;
+    if (error) {
+      edit.saving = false;
+      edit.error = error;
+    } else {
+      delete this.queueEdits[paneId];
+    }
+    if (this.paneId !== paneId) return;
+    this.composerKey = '';
+    this.renderComposer();
+    document.getElementById(error ? `queue-edit-${paneId}` : `composer-${paneId}`)?.focus();
   }
 
   onCompletions(requestId: number, items: CompletionItem[]): void {
@@ -168,25 +210,33 @@ export class ChatView {
     const paneId = this.paneId;
     const { h } = this.host;
     const stick = this.stickToBottom;
+    const scrollTop = this.messages.scrollTop;
     const items: HTMLElement[] = [];
     const transcript = this.transcript?.paneId === paneId ? this.transcript : null;
     const agent = this.host.agent(paneId);
-    if (!transcript) {
-      items.push(h('div', { class: 'muted pad' }, h('span', { class: 'spinner' }), '讀取對話…'));
-    } else {
-      if (transcript.source === 'terminal' && transcript.messages[0]?.role === 'terminal') {
-        items.push(h('div', { class: 'notice' }, '這個 agent 沒有可讀的對話紀錄，以下是終端機畫面。'));
+    const key = JSON.stringify([transcript?.source, transcript?.messages, this.pending[paneId], agent?.status === 'working', agent?.label, agent?.name, agent?.kind]);
+    if (key !== this.bodyKey) {
+      this.bodyKey = key;
+      if (!transcript) {
+        items.push(h('div', { class: 'muted pad' }, h('span', { class: 'spinner' }), '讀取對話…'));
+      } else {
+        if (transcript.source === 'terminal' && transcript.messages[0]?.role === 'terminal') {
+          items.push(h('div', { class: 'notice' }, '這個 agent 沒有可讀的對話紀錄，以下是終端機畫面。'));
+        }
+        items.push(...this.renderTurns(transcript.messages, agent));
+        for (const item of this.pending[paneId] ?? []) items.push(this.renderUser(item.text, true));
+        if (agent?.status === 'working') {
+          items.push(h('div', { class: 'thinking' }, h('span', { class: 'spinner' }), '工作中…'));
+        }
       }
-      items.push(...this.renderTurns(transcript.messages, agent));
-      for (const item of this.pending[paneId] ?? []) items.push(this.renderUser(item.text, true));
-      if (agent?.status === 'working') {
-        items.push(h('div', { class: 'thinking' }, h('span', { class: 'spinner' }), '工作中…'));
-      }
+      this.messages.replaceChildren(...items);
     }
-    this.messages.replaceChildren(...items);
-    if (stick) this.scrollToBottom();
-    else this.scrollButton?.classList.add('visible');
     this.renderComposer();
+    if (this.messages.isConnected) {
+      if (stick) this.scrollToBottom();
+      else this.messages.scrollTop = scrollTop;
+    }
+    this.scrollButton?.classList.toggle('visible', !stick);
   }
 
   /** 把連續的助理文字與工具呼叫合併成一個回覆區塊。 */
@@ -244,6 +294,8 @@ export class ChatView {
 
   private renderComposer(): void {
     if (!this.paneId || !this.composer) return;
+    // 組字完成前，延後會更換佇列編輯框與工具列的更新。
+    if (this.composingElement?.isConnected) return;
     const paneId = this.paneId;
     const { h, icon, send } = this.host;
     const agent = this.host.agent(paneId);
@@ -255,6 +307,7 @@ export class ChatView {
       preset?.id,
       transcript && [transcript.model, transcript.effort, transcript.screen, transcript.dialog, transcript.queue, transcript.usage],
       this.screenOpen.has(paneId),
+      this.queueEdits[paneId] && [this.queueEdits[paneId].id, this.queueEdits[paneId].saving, this.queueEdits[paneId].error],
     ]);
     if (key === this.composerKey && this.composer.childElementCount) return;
     this.composerKey = key;
@@ -265,44 +318,46 @@ export class ChatView {
     if (!draft.modelDirty) draft.model = currentModel;
     if (!draft.effortDirty) draft.effort = currentEffort;
 
-    const old = this.composer.querySelector('textarea');
-    const hadFocus = old !== null && old === document.activeElement;
+    const focused = document.activeElement;
+    const old = focused instanceof HTMLTextAreaElement && this.composer.contains(focused) ? focused : null;
+    const focusedId = old?.id;
     const selection = old ? [old.selectionStart, old.selectionEnd] : null;
     const working = agent?.status === 'working' || agent?.status === 'blocked';
     const waiting = agent?.status === 'blocked' || Boolean(transcript?.dialog?.length);
 
-    const textarea = h('textarea', {
-      id: `composer-${paneId}`,
-      rows: 1,
-      placeholder: waiting
+    if (!this.input) {
+      this.input = h('textarea', { id: `composer-${paneId}`, rows: 1, 'aria-label': '訊息' });
+      this.trackComposition(this.input);
+    }
+    const textarea = this.input;
+    if (textarea.value !== draft.text) textarea.value = draft.text;
+    textarea.placeholder = waiting
         ? '請點選上方選項；選「Type something」後可在這裡輸入回答'
         : working
           ? '工作中：Enter 加入佇列，⌘/Ctrl+Enter 立即插入'
-          : '輸入訊息，/ 指令，@ 檔案（Enter 送出）',
-      'aria-label': '訊息',
-      value: draft.text,
-    });
+          : '輸入訊息，/ 指令，@ 檔案（Enter 送出）';
     const autosize = () => {
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
     };
-    textarea.addEventListener('input', () => {
+    textarea.oninput = () => {
       draft.text = textarea.value;
       this.host.persist();
       autosize();
       this.updateCompletion(textarea, paneId);
-    });
-    textarea.addEventListener('keydown', (event) => this.onKeyDown(event, textarea, paneId, submit));
-    textarea.addEventListener('blur', () => setTimeout(() => this.closeCompletion(), 150));
-    textarea.addEventListener('paste', (event) => {
+    };
+    textarea.onkeydown = (event) => this.onKeyDown(event, textarea, paneId, submit);
+    textarea.onblur = () => setTimeout(() => this.closeCompletion(), 150);
+    textarea.onpaste = (event) => {
       const files = Array.from(event.clipboardData?.files ?? []);
       if (files.length) {
         event.preventDefault();
         void this.uploadFiles(paneId, files);
       }
-    });
+    };
 
     const submit = (mode: 'queue' | 'now') => {
+      if (this.composingElement === textarea) return;
       const text = draft.text.trim();
       const attachments = draft.attachments ?? [];
       if (!text && !attachments.length) return;
@@ -368,7 +423,7 @@ export class ChatView {
       textarea.focus();
     };
 
-    const toolbar: Child[] = [
+    const toolbar: HTMLElement[] = [
       h('button', { class: 'tool-button', title: '附加檔案', 'aria-label': '附加檔案', onclick: () => send({ type: 'pickFiles', paneId }) }, icon('attach')),
       h('button', { class: 'tool-button trigger', title: '提及檔案（@）', 'aria-label': '提及檔案', onclick: () => insertTrigger('@') }, '@'),
       h('button', { class: 'tool-button trigger', title: '指令（/）', 'aria-label': '指令', onclick: () => insertTrigger('/') }, '/'),
@@ -403,30 +458,52 @@ export class ChatView {
       h(
         'button',
         { class: 'send-button', title: working ? '加入佇列（Enter）' : '送出（Enter）', 'aria-label': working ? '加入佇列' : '送出', disabled: !agent, onclick: () => submit('queue') },
-        icon(working ? 'queue' : 'send'),
+        icon('send'),
       ),
     );
 
-    const box = h(
-      'div',
-      { class: 'chat-input' },
-      chips.length ? h('div', { class: 'chips' }, ...chips) : null,
-      textarea,
-      h('div', { class: 'input-toolbar' }, ...toolbar),
-    );
-
-    this.composer.replaceChildren(
-      ...this.renderDialog(paneId, transcript, agent),
-      ...this.renderQueue(paneId, transcript),
-      h('div', { class: 'completion', role: 'listbox', hidden: true }),
-      box,
-    );
+    if (!this.composerParts) {
+      const dialog = h('div', { class: 'dialog-slot' });
+      const queue = h('div', { class: 'queue-slot' });
+      const chips = h('div', { class: 'chips', hidden: true });
+      const toolbar = h('div', { class: 'input-toolbar' });
+      this.composerParts = { dialog, queue, chips, toolbar };
+      this.composer.append(dialog, queue,
+        h('div', { class: 'completion', role: 'listbox', hidden: true }),
+        h('div', { class: 'chat-input' }, chips, textarea, toolbar));
+    }
+    const parts = this.composerParts;
+    parts.dialog.replaceChildren(...this.renderDialog(paneId, transcript, agent));
+    parts.queue.replaceChildren(...this.renderQueue(paneId, transcript));
+    parts.chips.hidden = !chips.length;
+    parts.chips.replaceChildren(...chips);
+    parts.toolbar.replaceChildren(...toolbar);
     autosize();
-    if (hadFocus) {
-      textarea.focus();
-      if (selection) textarea.setSelectionRange(selection[0] ?? 0, selection[1] ?? 0);
+    const restoreFocus = focusedId ? document.getElementById(focusedId) : null;
+    if (restoreFocus instanceof HTMLTextAreaElement && restoreFocus !== old) {
+      restoreFocus.focus();
+      if (selection) restoreFocus.setSelectionRange(selection[0] ?? 0, selection[1] ?? 0);
     }
     this.renderCompletion();
+  }
+
+  private trackComposition(textarea: HTMLTextAreaElement): void {
+    textarea.addEventListener('compositionstart', () => {
+      this.composingElement = textarea;
+      window.clearTimeout(this.completionTimer);
+      this.closeCompletion();
+    });
+    textarea.addEventListener('compositionend', () => {
+      if (this.composingElement === textarea) this.composingElement = null;
+      const paneId = this.paneId;
+      // 等候最後一個 input 事件保存完整文字，再套用背景更新。
+      window.setTimeout(() => {
+        if (this.paneId !== paneId) return;
+        this.composerKey = '';
+        this.renderBody();
+        if (textarea === this.input) this.updateCompletion(textarea, paneId!);
+      }, 0);
+    });
   }
 
   /**
@@ -567,7 +644,8 @@ export class ChatView {
 
   private renderQueue(paneId: string, transcript: Transcript | null): HTMLElement[] {
     const queue = transcript?.queue ?? [];
-    if (!queue.length) return [];
+    const edit = this.queueEdits[paneId];
+    if (!queue.length && !edit) return [];
     const { h, icon, send } = this.host;
     return [
       h(
@@ -582,18 +660,103 @@ export class ChatView {
             h('span', { class: 'queue-text', title: item.text }, item.text || item.attachments.join(' ')),
             h(
               'button',
-              { class: 'tool-button', title: '立即插入到目前的回合', 'aria-label': '立即插入', onclick: () => send({ type: 'insertQueued', paneId, id: item.id }) },
+              {
+                class: 'tool-button', type: 'button', title: '修改訊息', 'aria-label': `修改第 ${index + 1} 則佇列訊息`, disabled: Boolean(edit),
+                onclick: () => {
+                  this.queueEdits[paneId] = { id: item.id, text: item.text, attachments: [...item.attachments], saving: false };
+                  this.composerKey = '';
+                  this.renderComposer();
+                  document.getElementById(`queue-edit-${paneId}`)?.focus();
+                },
+              },
+              icon('edit'),
+            ),
+            h(
+              'button',
+              { class: 'tool-button', title: '立即插入到目前的回合', 'aria-label': '立即插入', disabled: edit?.id === item.id, onclick: () => send({ type: 'insertQueued', paneId, id: item.id }) },
               icon('bolt'),
             ),
             h(
               'button',
-              { class: 'tool-button', title: '移除', 'aria-label': '移除', onclick: () => send({ type: 'removeQueued', paneId, id: item.id }) },
+              { class: 'tool-button', title: '移除', 'aria-label': '移除', disabled: edit?.id === item.id, onclick: () => send({ type: 'removeQueued', paneId, id: item.id }) },
               icon('close'),
             ),
           ),
         ),
+        edit ? this.renderQueueEditor(paneId, edit, queue.some((item) => item.id === edit.id)) : null,
       ),
     ];
+  }
+
+  private renderQueueEditor(paneId: string, edit: QueueEdit, available: boolean): HTMLElement {
+    const { h, send } = this.host;
+    const id = `queue-edit-${paneId}`;
+    const finish = () => {
+      delete this.queueEdits[paneId];
+      this.composerKey = '';
+      this.renderComposer();
+      document.getElementById(`composer-${paneId}`)?.focus();
+    };
+    const error = h('div', { id: `${id}-error`, class: 'queue-edit-error', role: 'alert', hidden: !edit.error }, edit.error);
+    const textarea = h('textarea', {
+      id, name: 'queued-message', rows: 3, value: edit.text, disabled: edit.saving,
+      required: !edit.attachments.length, 'aria-describedby': `${id}-help ${id}-error`,
+    });
+    this.trackComposition(textarea);
+    textarea.addEventListener('input', () => {
+      edit.text = textarea.value;
+      edit.error = undefined;
+      error.hidden = true;
+      textarea.setCustomValidity('');
+    });
+    const form = h(
+      'form',
+      {
+        class: 'queue-editor', action: '#', method: 'post', 'aria-labelledby': `${id}-label`,
+        onsubmit: (event: SubmitEvent) => {
+          event.preventDefault();
+          if (edit.saving || !available) return;
+          textarea.setCustomValidity(!edit.text.trim() && !edit.attachments.length ? '請輸入訊息。' : '');
+          if (!textarea.reportValidity()) return;
+          edit.saving = true;
+          edit.error = undefined;
+          this.composerKey = '';
+          this.renderComposer();
+          send({ type: 'updateQueued', paneId, id: edit.id, text: edit.text });
+        },
+      },
+      h('label', { id: `${id}-label`, for: id }, '修改佇列訊息'),
+      textarea,
+      h('div', { id: `${id}-help`, class: 'queue-edit-help' }, available
+        ? 'Enter 換行，⌘/Ctrl+Enter 儲存，Esc 取消。附件與排隊順序會保留。'
+        : '這則訊息已送出或移除。修改內容仍保留在這裡。'),
+      error,
+      h('div', { class: 'queue-edit-actions' },
+        h('button', { type: 'submit', disabled: edit.saving || !available }, edit.saving ? '儲存中…' : '儲存修改'),
+        h('button', { type: 'button', class: 'secondary', disabled: edit.saving, onclick: finish }, '取消'),
+        !available ? h('button', {
+          type: 'button', class: 'secondary', disabled: edit.saving,
+          onclick: () => {
+            const draft = this.draft(paneId);
+            draft.text = [draft.text, edit.text].filter(Boolean).join('\n\n');
+            draft.attachments = [...new Set([...(draft.attachments ?? []), ...edit.attachments])];
+            this.host.persist();
+            finish();
+          },
+        }, '移到輸入框') : null,
+      ),
+    );
+    textarea.addEventListener('keydown', (event) => {
+      if (event.isComposing || event.keyCode === 229 || this.composingElement === textarea) return;
+      if (event.key === 'Escape' && !edit.saving) {
+        event.preventDefault();
+        finish();
+      } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    return form;
   }
 
   /** 確認畫面：把選項顯示成按鈕。沒有偵測到選項時顯示終端機畫面與按鍵。 */
@@ -741,6 +904,7 @@ export class ChatView {
   // ---------- @ 與 / 補全 ----------
 
   private updateCompletion(textarea: HTMLTextAreaElement, paneId: string): void {
+    if (this.composingElement === textarea) return;
     const caret = textarea.selectionStart ?? 0;
     const before = textarea.value.slice(0, caret);
     const slash = /^\/([^\s]*)$/.exec(before);
@@ -823,7 +987,7 @@ export class ChatView {
 
   private accept(item: CompletionItem): void {
     const state = this.completion;
-    const textarea = this.composer?.querySelector('textarea');
+    const textarea = this.composer?.querySelector<HTMLTextAreaElement>('.chat-input > textarea');
     if (!state || !textarea) return;
     const caret = textarea.selectionStart ?? textarea.value.length;
     textarea.setRangeText(item.insert, state.start, caret, 'end');
@@ -834,6 +998,7 @@ export class ChatView {
   }
 
   private onKeyDown(event: KeyboardEvent, textarea: HTMLTextAreaElement, paneId: string, submit: (mode: 'queue' | 'now') => void): void {
+    if (event.isComposing || event.keyCode === 229 || this.composingElement === textarea) return;
     const state = this.completion;
     if (state && state.items.length) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

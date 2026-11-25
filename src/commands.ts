@@ -95,6 +95,13 @@ export class Commands {
       ];
     } else if (kind === 'codex') {
       entries = await markdownCommands(path.join(home, '.codex', 'prompts'), 'prompts:');
+    } else if (kind === 'agy') {
+      entries = [
+        ...(await skills(path.join(root, '.github', 'skills'))),
+        ...(await skills(path.join(root, '.agents', 'skills'))),
+        ...(await skills(path.join(home, '.agents', 'skills'))),
+        ...(await skills(path.join(home, '.gemini', 'antigravity-cli', 'builtin', 'skills'))),
+      ];
     }
     this.diskCache.set(key, { at: Date.now(), entries });
     return entries;

@@ -513,6 +513,16 @@ export class Controller implements vscode.Disposable {
     await this.deliver(paneId, message);
   }
 
+  /** 修改尚未送出的訊息，保留原本的順序、附件與模型設定。 */
+  async updateQueued(paneId: string, id: number, text: string): Promise<void> {
+    const item = this.queues.get(paneId)?.find((entry) => entry.id === id);
+    if (!item) throw new Error('這則訊息已送出或移除，無法修改。');
+    const next = text.trim();
+    if (!next && !item.attachments.length) throw new Error('請輸入訊息，或保留至少一個附件。');
+    item.text = next;
+    await this.pushTranscript();
+  }
+
   removeQueued(paneId: string, id: number): void {
     const queue = this.queues.get(paneId) ?? [];
     this.queues.set(paneId, queue.filter((item) => item.id !== id));

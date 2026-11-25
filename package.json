@@ -263,13 +263,25 @@
               "label": "Antigravity",
               "kind": "agy",
               "models": [
-                "gemini-4-argon-high"
+                "gemini-4-argon"
               ],
-              "efforts": [],
+              "efforts": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
               "modelArgs": [
                 "--model",
                 "{model}"
-              ]
+              ],
+              "effortArgs": [
+                "--effort",
+                "{effort}"
+              ],
+              "switchModel": "/model {model}",
+              "switchEffort": "/effort {effort}"
             }
           ]
         }
@@ -281,12 +293,13 @@
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "node --test --experimental-strip-types test/*.test.mts",
-    "package": "npx @vscode/vsce package --no-dependencies"
+    "package": "npx @vscode/vsce package --no-dependencies --allow-missing-repository"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/vscode": "~1.105.0",
     "esbuild": "^0.28.2",
+    "happy-dom": "^21.0.4",
     "typescript": "^5.9.0"
   }
 }

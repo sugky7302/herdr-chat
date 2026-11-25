@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { claudeProjectDirName, parseClaude, parseCodex } from '../src/transcript/parse.ts';
+import { claudeProjectDirName, parseAgy, parseClaude, parseCodex } from '../src/transcript/parse.ts';
 
 const lines = (...items: unknown[]) => items.map((item) => JSON.stringify(item)).join('\n');
 
@@ -88,4 +88,61 @@ test('Claude：工作中送出的訊息（queued_command）顯示一次', () => 
     { role: 'user', text: '可以了' },
     { role: 'user', text: '還需要佇列功能' },
   ]);
+});
+
+test('Antigravity：解析 USER_REQUEST、工具呼叫、回覆、模型、effort 與 token 用量', () => {
+  const text = lines(
+    {
+      step_index: 0,
+      source: 'USER_EXPLICIT',
+      type: 'USER_INPUT',
+      content: '<USER_REQUEST>\n請讀取 wE:p1 的最新輸出\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ntime\n</ADDITIONAL_METADATA>',
+    },
+    {
+      step_index: 1,
+      source: 'SYSTEM_SDK',
+      type: 'EPHEMERAL_MESSAGE',
+      content: '[claude-mem] internal message',
+    },
+    {
+      step_index: 2,
+      source: 'MODEL',
+      type: 'PLANNER_RESPONSE',
+      model: 'gemini-4-argon-medium',
+      input_tokens: 1000,
+      cache_read_tokens: 2000,
+      output_tokens: 50,
+      tool_calls: [{ name: 'run_command', args: { CommandLine: 'herdr --help' } }],
+    },
+    {
+      step_index: 3,
+      source: 'MODEL',
+      type: 'GENERIC',
+      content: 'Command exited with code 0.',
+    },
+    {
+      step_index: 4,
+      source: 'MODEL',
+      type: 'PLANNER_RESPONSE',
+      model: 'gemini-4-argon-medium',
+      input_tokens: 1500,
+      cache_read_tokens: 2000,
+      output_tokens: 120,
+      content: '已完成總結。',
+    },
+  );
+  const parsed = parseAgy(text);
+  assert.equal(parsed.model, 'gemini-4-argon-medium');
+  assert.equal(parsed.effort, 'medium');
+  assert.deepEqual(parsed.messages, [
+    { role: 'user', text: '請讀取 wE:p1 的最新輸出' },
+    { role: 'tool', tool: 'run_command', text: 'herdr --help' },
+    { role: 'assistant', text: '已完成總結。' },
+  ]);
+  assert.deepEqual(parsed.usage, {
+    contextTokens: 3620,
+    contextWindow: 1_000_000,
+    totalTokens: 3050 + 3620,
+    outputTokens: 170,
+  });
 });

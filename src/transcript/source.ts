@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import type { HerdrClient } from '../herdr/client';
 import type { PaneInfo } from '../herdr/types';
 import type { Transcript } from '../shared';
-import { claudeProjectDirName, parseClaude, parseCodex, type ParsedTranscript } from './parse';
+import { claudeProjectDirName, parseAgy, parseClaude, parseCodex, type ParsedTranscript } from './parse';
 import { readStatus } from '../claudeUsage';
 
 interface CacheEntry {
@@ -36,6 +36,9 @@ export class TranscriptSource {
       } else if (kind === 'codex') {
         const file = await this.findCodexFile(pane);
         if (file) return this.fromFile(pane.pane_id, 'codex', file, parseCodex);
+      } else if (kind === 'agy') {
+        const file = await this.findAgyFile(pane);
+        if (file) return this.fromFile(pane.pane_id, 'agy', file, parseAgy);
       }
     } catch {
       // 讀不到原生紀錄時改用終端機文字。
@@ -65,7 +68,7 @@ export class TranscriptSource {
 
   private async fromFile(
     paneId: string,
-    source: 'claude' | 'codex',
+    source: 'claude' | 'codex' | 'agy',
     file: string,
     parse: (text: string) => ParsedTranscript,
   ): Promise<Transcript> {
@@ -134,6 +137,18 @@ export class TranscriptSource {
         this.codexFileByPane.set(pane.pane_id, file);
         return file;
       }
+    }
+    return null;
+  }
+
+  private async findAgyFile(pane: PaneInfo): Promise<string | null> {
+    const session = pane.agent_session;
+    if (!session) return null;
+    if (session.kind === 'path') return session.value;
+    const logsDir = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain', session.value, '.system_generated', 'logs');
+    for (const name of ['transcript_full.jsonl', 'transcript.jsonl']) {
+      const candidate = path.join(logsDir, name);
+      if (await exists(candidate)) return candidate;
     }
     return null;
   }

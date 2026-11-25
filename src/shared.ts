@@ -98,7 +98,7 @@ export interface QueuedView {
 
 export interface Transcript {
   paneId: string;
-  source: 'claude' | 'codex' | 'terminal';
+  source: 'claude' | 'codex' | 'agy' | 'terminal';
   messages: ChatMessage[];
   model?: string;
   effort?: string;
@@ -120,6 +120,7 @@ export type ToWebview =
   | { type: 'openedPane'; paneId: string }
   | { type: 'completions'; requestId: number; items: CompletionItem[] }
   | { type: 'attachments'; paneId: string; paths: string[] }
+  | { type: 'queuedUpdated'; paneId: string; id: number; error?: string }
   | { type: 'busy'; busy: boolean; text?: string }
   | { type: 'error'; text: string };
 
@@ -142,6 +143,7 @@ export type FromWebview =
       mode?: 'queue' | 'now';
     }
   | { type: 'removeQueued'; paneId: string; id: number }
+  | { type: 'updateQueued'; paneId: string; id: number; text: string }
   | { type: 'insertQueued'; paneId: string; id: number }
   | { type: 'chooseOption'; paneId: string; number: number }
   | { type: 'renameTab'; tabId: string }

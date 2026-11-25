@@ -40,7 +40,21 @@ function summarizeToolInput(input: unknown): string {
   }
   if (typeof input !== 'object') return clip(String(input), MAX_TOOL_SUMMARY);
   const value = input as Record<string, unknown>;
-  for (const key of ['description', 'command', 'cmd', 'file_path', 'path', 'pattern', 'query', 'url', 'prompt']) {
+  for (const key of [
+    'description',
+    'command',
+    'cmd',
+    'CommandLine',
+    'toolSummary',
+    'file_path',
+    'path',
+    'Path',
+    'pattern',
+    'query',
+    'url',
+    'prompt',
+    'Prompt',
+  ]) {
     const field = value[key];
     if (typeof field === 'string' && field) return clip(field, MAX_TOOL_SUMMARY);
     if (Array.isArray(field) && field.length) return clip(field.join(' '), MAX_TOOL_SUMMARY);
@@ -188,6 +202,7 @@ export function parseCodex(text: string): ParsedTranscript {
     if (entry.type === 'event_msg' && payload.type === 'token_count') {
       const info = payload.info;
       const primary = payload.rate_limits?.primary;
+      const resetsAt = typeof primary?.resets_at === 'number' ? primary.resets_at : usage?.rateLimitResetsAt;
       usage = {
         contextTokens: info?.last_token_usage?.total_tokens ?? usage?.contextTokens,
         contextWindow: info?.model_context_window ?? usage?.contextWindow,
@@ -195,7 +210,7 @@ export function parseCodex(text: string): ParsedTranscript {
         outputTokens: info?.total_token_usage?.output_tokens ?? usage?.outputTokens,
         rateLimitPercent: typeof primary?.used_percent === 'number' ? primary.used_percent : usage?.rateLimitPercent,
         rateLimitWindowMinutes: primary?.window_minutes ?? usage?.rateLimitWindowMinutes,
-        rateLimitResetsAt: typeof primary?.resets_at === 'number' ? primary.resets_at : usage?.rateLimitResetsAt,
+        ...(resetsAt !== undefined ? { rateLimitResetsAt: resetsAt } : {}),
         ...(payload.rate_limits?.secondary?.used_percent !== undefined
           ? {
               secondaryPercent: payload.rate_limits.secondary.used_percent,
@@ -233,4 +248,68 @@ export function parseCodex(text: string): ParsedTranscript {
 /** Claude Code 把專案路徑中非英數字元換成 - 當作資料夾名稱。 */
 export function claudeProjectDirName(cwd: string): string {
   return cwd.replace(/[^A-Za-z0-9]/g, '-');
+}
+
+/** 從 Antigravity 的 `<USER_REQUEST>…</USER_REQUEST>` 取出使用者輸入的文字。 */
+function extractAgyUserRequest(raw: string): string {
+  const match = /<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/.exec(raw);
+  const body = match ? match[1] : raw;
+  return stripPasteTags(body);
+}
+
+export function parseAgy(text: string): ParsedTranscript {
+  const messages: ChatMessage[] = [];
+  let model: string | undefined;
+  let effort: string | undefined;
+  let contextTokens = 0;
+  let totalTokens = 0;
+  let outputTokens = 0;
+  let hasUsage = false;
+
+  eachJson(text, (entry) => {
+    if (entry.source === 'USER_EXPLICIT' && entry.type === 'USER_INPUT' && typeof entry.content === 'string') {
+      const body = extractAgyUserRequest(entry.content);
+      if (body && !isInjectedUserText(body)) pushMessage(messages, { role: 'user', text: body });
+      return;
+    }
+    if (entry.source === 'MODEL' && entry.type === 'PLANNER_RESPONSE') {
+      if (typeof entry.model === 'string' && entry.model) {
+        model = entry.model;
+        const effortMatch = /-(low|medium|high|xhigh|max)$/i.exec(entry.model);
+        if (effortMatch) effort = effortMatch[1].toLowerCase();
+      }
+      const inTok = typeof entry.input_tokens === 'number' ? entry.input_tokens : 0;
+      const cacheTok = typeof entry.cache_read_tokens === 'number' ? entry.cache_read_tokens : 0;
+      const outTok = typeof entry.output_tokens === 'number' ? entry.output_tokens : 0;
+      if (inTok || cacheTok || outTok) {
+        hasUsage = true;
+        contextTokens = inTok + cacheTok + outTok;
+        totalTokens += contextTokens;
+        outputTokens += outTok;
+      }
+      if (Array.isArray(entry.tool_calls)) {
+        for (const call of entry.tool_calls) {
+          if (!call || typeof call !== 'object') continue;
+          pushMessage(messages, {
+            role: 'tool',
+            tool: String(call.name ?? 'tool'),
+            text: summarizeToolInput(call.args ?? call.input),
+          });
+        }
+      }
+      if (typeof entry.content === 'string' && entry.content.trim()) {
+        pushMessage(messages, { role: 'assistant', text: entry.content });
+      }
+    }
+  });
+
+  const usage: Usage | undefined = hasUsage
+    ? {
+        contextTokens,
+        contextWindow: 1_000_000,
+        totalTokens,
+        outputTokens,
+      }
+    : undefined;
+  return finish(messages, model, effort, usage);
 }

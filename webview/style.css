@@ -119,6 +119,9 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
 .row-text { display: flex; flex-direction: column; min-width: 0; }
 .row-title, .row-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-sub { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+.agent-heading { display: inline-flex; align-items: baseline; gap: 0.45em; min-inline-size: 0; max-inline-size: 100%; vertical-align: bottom; }
+.agent-name { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-id { flex: none; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); font-size: 0.85em; font-weight: 400; white-space: nowrap; }
 
 .status {
   width: 8px;
@@ -308,6 +311,7 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
 }
 .chat-input textarea:focus-visible { outline: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px 0; }
+.dialog-slot:empty, .queue-slot:empty, .chips[hidden] { display: none; }
 .chip {
   display: inline-flex;
   align-items: center;
@@ -447,6 +451,11 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
   color: var(--vscode-badge-foreground);
 }
 .queue-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-editor { display: flex; flex-direction: column; gap: 6px; padding-block: 8px 4px; }
+.queue-editor textarea { width: 100%; min-height: 4.5em; resize: vertical; font: inherit; }
+.queue-edit-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.queue-edit-help { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+.queue-edit-error { color: var(--vscode-errorForeground); }
 
 /* 確認畫面 */
 .dialog-card {
@@ -501,6 +510,7 @@ code, pre, .terminal {
   font-size: var(--vscode-editor-font-size);
 }
 :not(pre) > code { background: var(--vscode-textCodeBlock-background); padding: 0 3px; border-radius: 3px; }
+.markdown :not(pre) > code { font-size: 0.9em; }
 pre {
   margin: 0 0 0.6em;
   padding: 8px;

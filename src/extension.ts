@@ -101,6 +101,10 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
             mode: message.mode,
           });
           break;
+        case 'updateQueued':
+          await c.updateQueued(message.paneId, message.id, message.text);
+          this.post({ type: 'queuedUpdated', paneId: message.paneId, id: message.id });
+          break;
         case 'removeQueued':
           c.removeQueued(message.paneId, message.id);
           break;
@@ -176,7 +180,11 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
           break;
       }
     } catch (error) {
-      this.post({ type: 'error', text: describe(error) });
+      if (message.type === 'updateQueued') {
+        this.post({ type: 'queuedUpdated', paneId: message.paneId, id: message.id, error: describe(error) });
+      } else {
+        this.post({ type: 'error', text: describe(error) });
+      }
     }
   }
 

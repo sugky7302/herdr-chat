@@ -66,6 +66,9 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
     case 'transcript':
       if (route?.view === 'pane' && route.paneId === message.transcript.paneId) chat.setTranscript(message.transcript);
       break;
+    case 'queuedUpdated':
+      chat.finishQueueEdit(message.paneId, message.id, message.error);
+      break;
     case 'completions':
       chat.onCompletions(message.requestId, message.items);
       break;
@@ -199,7 +202,16 @@ function render(): void {
   const focusedId = active?.id;
   const selection =
     active && 'selectionStart' in active && active.selectionStart != null ? [active.selectionStart, active.selectionEnd ?? 0] : null;
-  app.replaceChildren(renderHeader(), renderMain());
+  const pane = app.querySelector<HTMLElement>('main.pane');
+  if (route?.view === 'pane' && pane?.dataset.paneId === route.paneId) {
+    app.firstElementChild?.replaceWith(renderHeader());
+    pane.querySelector('.toolbar')?.replaceWith(renderPaneToolbar(route.paneId));
+    chat.refresh();
+    app.querySelector(':scope > .busy')?.remove();
+    app.querySelector(':scope > .error')?.remove();
+  } else {
+    app.replaceChildren(renderHeader(), renderMain());
+  }
   if (busyText) app.append(h('div', { class: 'busy', role: 'status' }, h('span', { class: 'spinner' }), busyText));
   if (errorText)
     app.append(
@@ -207,8 +219,10 @@ function render(): void {
     );
   if (focusedId) {
     const element = document.getElementById(focusedId) as HTMLInputElement | null;
-    element?.focus();
-    if (element && selection) element.setSelectionRange(selection[0], selection[1]);
+    if (element && element !== active) {
+      element.focus();
+      if (selection) element.setSelectionRange(selection[0], selection[1]);
+    }
   }
 }
 
@@ -303,14 +317,25 @@ function renderMain(): HTMLElement {
   }
 }
 
-function toolbar(title: string, back: Route | null, ...actions: Child[]): HTMLElement {
+function toolbar(title: string | HTMLElement, back: Route | null, ...actions: Child[]): HTMLElement {
   return h(
     'div',
     { class: 'toolbar' },
     back ? h('button', { class: 'icon-button', title: '返回', 'aria-label': '返回', onclick: () => go(back) }, icon('back')) : null,
-    h('h2', { title }, title),
+    h('h2', { title: typeof title === 'string' ? title : title.textContent }, title),
     h('div', { class: 'spacer' }),
     ...actions,
+  );
+}
+
+/** 名稱後方保留完整 pane ID，方便指定其他 agent。 */
+function agentTitle(agent: AgentView): HTMLElement {
+  return h(
+    'span',
+    { class: 'agent-heading' },
+    h('span', { class: 'agent-name' }, agent.label || agent.name || agent.kind || '終端機'),
+    ' ',
+    h('span', { class: 'agent-id' }, agent.paneId),
   );
 }
 
@@ -406,7 +431,7 @@ function renderTab(tabId: string): HTMLElement {
             h(
               'span',
               { class: 'row-text' },
-              h('span', { class: 'row-title' }, agent.label || agent.name || agent.kind || '終端機'),
+              h('span', { class: 'row-title' }, agentTitle(agent)),
               h('span', { class: 'row-sub' }, [agent.kind, agent.title].filter(Boolean).join(' · ') || agent.paneId),
             ),
           ),
@@ -533,16 +558,13 @@ const chat = new ChatView({
   drafts,
 });
 
-function renderPane(paneId: string): HTMLElement {
+function renderPaneToolbar(paneId: string): HTMLElement {
   const found = findAgent(paneId);
   const agent = found?.agent;
   const back: Route = found ? { view: 'tab', tabId: found.tab.tabId } : { view: 'history' };
   const screenOn = chat.screenOpen.has(paneId);
-  return h(
-    'main',
-    { class: 'pane' },
-    toolbar(
-      agent?.label || agent?.name || agent?.kind || paneId,
+  return toolbar(
+      agent ? agentTitle(agent) : paneId,
       back,
       agent ? statusDot(agent.status) : null,
       h(
@@ -563,9 +585,11 @@ function renderPane(paneId: string): HTMLElement {
       ),
       h('button', { class: 'icon-button', title: '重新命名', 'aria-label': '重新命名', onclick: () => send({ type: 'renamePane', paneId }) }, icon('edit')),
       h('button', { class: 'icon-button', title: '在 herdr 中聚焦此 pane', 'aria-label': '在 herdr 中聚焦此 pane', onclick: () => send({ type: 'focusPaneInHerdr', paneId }) }, icon('focus')),
-    ),
-    ...chat.mount(paneId),
   );
+}
+
+function renderPane(paneId: string): HTMLElement {
+  return h('main', { class: 'pane', 'data-pane-id': paneId }, renderPaneToolbar(paneId), ...chat.mount(paneId));
 }
 
 render();
