@@ -101,8 +101,22 @@ export function parseClaude(text: string): ParsedTranscript {
   // Claude Code 會把同一則回覆拆成多行，每行帶相同的 usage，所以依訊息 id 只算一次。
   const usageById = new Map<string, any>();
   let lastUsage: any;
+  /** 加入使用者訊息。Claude Code 有時把同一則訊息記成一般訊息與排隊指令兩筆，所以略過最近出現過的相同內容。 */
+  const pushUser = (raw: string) => {
+    const text = stripPasteTags(raw);
+    if (!text) return;
+    const recent = messages.slice(-12).some((item) => item.role === 'user' && item.text === text);
+    if (!recent) pushMessage(messages, { role: 'user', text });
+  };
   eachJson(text, (entry) => {
     if (entry.isSidechain) return;
+    // agent 工作中送出的訊息記成 queued_command 附件，而不是一般的使用者訊息。
+    if (entry.type === 'attachment' && entry.attachment?.type === 'queued_command') {
+      const prompt = entry.attachment.prompt;
+      const body = typeof prompt === 'string' ? prompt : Array.isArray(prompt) ? prompt.map((p: any) => p?.text ?? '').join('\n') : '';
+      if (entry.attachment.commandMode === 'prompt' || entry.attachment.commandMode === undefined) pushUser(body);
+      return;
+    }
     const message = entry.message;
     if (entry.type === 'user' && message) {
       if (entry.isMeta) return;
@@ -114,7 +128,7 @@ export function parseClaude(text: string): ParsedTranscript {
           const effortMatch = /^\/effort\s+(\S+)/.exec(command);
           if (effortMatch) effort = effortMatch[1];
         } else if (!isInjectedUserText(content)) {
-          pushMessage(messages, { role: 'user', text: stripPasteTags(content) });
+          pushUser(content);
         }
         return;
       }
@@ -123,7 +137,7 @@ export function parseClaude(text: string): ParsedTranscript {
           .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
           .map((part: any) => part.text as string)
           .filter((part: string) => !isInjectedUserText(part));
-        if (texts.length) pushMessage(messages, { role: 'user', text: stripPasteTags(texts.join('\n\n')) });
+        if (texts.length) pushUser(texts.join('\n\n'));
       }
       return;
     }

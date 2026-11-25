@@ -44,12 +44,14 @@ const SCREEN_KEYS: { label: string; keys: string[]; title: string }[] = [
 ];
 
 const MAX_DROP_BYTES = 25 * 1024 * 1024;
+/** 「傳送中」訊息最多顯示的時間。 */
+const PENDING_MS = 15000;
 
 export class ChatView {
   transcript: Transcript | null = null;
   readonly screenOpen = new Set<string>();
   /** 已送出、還沒出現在紀錄中的訊息。 */
-  private pending: Record<string, string[]> = {};
+  private pending: Record<string, { text: string; at: number }[]> = {};
   private paneId: string | null = null;
   private messages: HTMLElement | null = null;
   private composer: HTMLElement | null = null;
@@ -99,8 +101,13 @@ export class ChatView {
     if (list?.length) {
       const seen = next.messages.filter((m) => m.role === 'user' || m.role === 'terminal').map((m) => m.text);
       const queued = (next.queue ?? []).map((item) => item.text);
+      const now = Date.now();
+      // 紀錄中出現、已進入佇列，或超過 15 秒的「傳送中」訊息都移除，避免同一則訊息顯示兩次。
       this.pending[next.paneId] = list.filter(
-        (text) => !queued.includes(text) && !seen.some((existing) => existing.includes(text.trim())),
+        (item) =>
+          now - item.at < PENDING_MS &&
+          !queued.includes(item.text) &&
+          !seen.some((existing) => existing.includes(item.text.trim())),
       );
     }
     this.transcript = next;
@@ -168,7 +175,7 @@ export class ChatView {
         items.push(h('div', { class: 'notice' }, '這個 agent 沒有可讀的對話紀錄，以下是終端機畫面。'));
       }
       items.push(...this.renderTurns(transcript.messages, agent));
-      for (const text of this.pending[paneId] ?? []) items.push(this.renderUser(text, true));
+      for (const item of this.pending[paneId] ?? []) items.push(this.renderUser(item.text, true));
       if (agent?.status === 'working') {
         items.push(h('div', { class: 'thinking' }, h('span', { class: 'spinner' }), '工作中…'));
       }
@@ -313,7 +320,7 @@ export class ChatView {
         model: draft.modelDirty ? draft.model : undefined,
         effort: draft.effortDirty ? draft.effort : undefined,
       });
-      if (!working || mode === 'now') (this.pending[paneId] ??= []).push(text);
+      if (!working || mode === 'now') (this.pending[paneId] ??= []).push({ text, at: Date.now() });
       draft.text = '';
       draft.attachments = [];
       draft.modelDirty = false;

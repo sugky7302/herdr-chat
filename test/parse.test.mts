@@ -77,3 +77,15 @@ test('移除 Claude Code 的貼上標籤', () => {
     { role: 'user', text: '第二則' },
   ]);
 });
+
+test('Claude：工作中送出的訊息（queued_command）顯示一次', () => {
+  const lines = [
+    { type: 'user', message: { content: '可以了' } },
+    { type: 'attachment', attachment: { type: 'queued_command', prompt: '可以了', commandMode: 'prompt' } },
+    { type: 'attachment', attachment: { type: 'queued_command', prompt: '還需要佇列功能', commandMode: 'prompt' } },
+  ].map((x) => JSON.stringify(x)).join('\n');
+  assert.deepEqual(parseClaude(lines).messages, [
+    { role: 'user', text: '可以了' },
+    { role: 'user', text: '還需要佇列功能' },
+  ]);
+});

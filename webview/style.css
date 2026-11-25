@@ -267,7 +267,8 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
 
 .scroll-bottom {
   position: absolute;
-  right: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: 10px;
   width: 28px;
   height: 28px;
