@@ -1,5 +1,6 @@
 // extension 與 webview 共用的訊息格式。
 import type { CollaborationTask } from './collaboration/types';
+import type { DeepseekStatus } from './deepseekUsage';
 import type { AgentPreset } from './presets';
 import type { SettingsScope, SettingsSnapshot } from './settings/types';
 
@@ -113,6 +114,8 @@ export interface Transcript {
   model?: string;
   effort?: string;
   usage?: Usage;
+  /** DeepSeek 餘額與估算花費。只有 dsh 對話才有。 */
+  deepseek?: DeepseekStatus;
   /** 等待送出的訊息（agent 工作中時排隊）。 */
   queue?: QueuedView[];
   /** agent 跳出的確認畫面中的選項。 */

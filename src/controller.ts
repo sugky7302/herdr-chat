@@ -24,6 +24,7 @@ import {
 } from './presets';
 import type { AgentView, CompletionItem, FromWebview, ProjectState, QueuedView, TabView, ToWebview, Transcript, WorktreeView } from './shared';
 import { TranscriptSource } from './transcript/source';
+import { DeepseekUsageTracker } from './deepseekUsage';
 
 const run = promisify(execFile);
 
@@ -88,6 +89,7 @@ export class Controller implements vscode.Disposable {
   private collaborationError: string | undefined;
   private readonly memoryClient: ClaudeMemClient;
   private readonly transcriptSnapshots = new Map<string, TranscriptSnapshot>();
+  private readonly deepseek = new DeepseekUsageTracker();
   private readonly checkpointTimes = new Map<string, number>();
   private readonly checkpointing = new Set<string>();
 
@@ -601,6 +603,7 @@ export class Controller implements vscode.Disposable {
       }
       if (this.screenPanes.has(paneId) || dialog.length || pane.agent_status === 'blocked') transcript.screen = screen;
     }
+    if (transcript.source === 'dsh') transcript.deepseek = await this.deepseek.read();
     transcript.queue = (this.queues.get(paneId) ?? []).map(({ id, text, attachments }) => ({ id, text, attachments }));
     this.transcriptSnapshots.set(paneId, { identity: paneIdentity(pane), transcript });
     const task = this.collaboration?.getTaskForTab?.(pane.tab_id);

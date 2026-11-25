@@ -2,7 +2,7 @@
 
 import { getIntlLocale, t } from '../src/l10n.ts';
 import { shortModel } from '../src/modelName';
-import type { AgentView, ChatMessage, CompletionItem, FromWebview, PresetView, Transcript, Usage } from '../src/shared';
+import type { AgentView, ChatMessage, CompletionItem, FromWebview, PresetView, Transcript } from '../src/shared';
 import { renderMarkdown } from './markdown';
 
 type Child = Node | string | null | undefined | false;
@@ -737,7 +737,7 @@ export class ChatView {
     }
     if (pill.length) toolbar.push(h('span', { class: 'model-pill' }, ...pill));
     toolbar.push(h('div', { class: 'spacer' }));
-    if (transcript?.usage) toolbar.push(this.renderUsage(transcript.usage));
+    if (transcript?.usage) toolbar.push(this.renderUsage(transcript));
     if (agent?.status === 'working') {
       toolbar.push(
         h('button', { type: 'button', class: 'tool-button', title: edit ? t('Interrupt agent') : t("Interrupt (Esc)"), 'aria-label': t("Interrupt"), onclick: () => send({ type: 'interrupt', paneId }) }, icon('stop')),
@@ -910,31 +910,49 @@ export class ChatView {
   }
 
   /**
-   * 用量圓圈。有方案額度時顯示額度剩餘（Claude：5 小時；Codex：一週），否則顯示上下文用量。
+   * 用量圓圈。三種模式依序：方案額度（Claude 5 小時、Codex 一週）、
+   * DeepSeek 餘額、上下文用量。
    */
-  private renderUsage(usage: Usage): HTMLElement {
+  private renderUsage(transcript: Transcript): HTMLElement {
+    const usage = transcript.usage!;
     const { h } = this.host;
     const context = usage.contextTokens ?? 0;
     const contextPercent = usage.contextWindow ? Math.min(100, (context / usage.contextWindow) * 100) : null;
     const plan = usage.rateLimitPercent !== undefined;
-    const remaining = plan ? Math.max(0, 100 - usage.rateLimitPercent!) : null;
+    const credit = plan ? undefined : transcript.deepseek;
+    const creditText = credit ? formatMoney('USD', credit.totalUsd) : '';
+    const balanceLines = credit
+      ? credit.balances.map((item) =>
+          item.currency === 'USD'
+            ? t("{0} balance: {1}", item.currency, formatMoney('USD', item.total))
+            : t("{0} balance: {1} (≈ {2})", item.currency, formatMoney(item.currency, item.total), formatMoney('USD', item.usd)),
+        )
+      : [];
+    const planPercent = plan ? Math.max(0, 100 - usage.rateLimitPercent!) : null;
     const windowLabel = usage.rateLimitWindowMinutes ? formatWindow(usage.rateLimitWindowMinutes) : t("Plan");
     const lines = [
       plan
-        ? t("{0} usage: {1}% remaining ({2}% used){3}", windowLabel, formatNumber(remaining!), formatNumber(usage.rateLimitPercent!), resetText(usage.rateLimitResetsAt))
+        ? t("{0} usage: {1}% remaining ({2}% used){3}", windowLabel, formatNumber(planPercent!), formatNumber(usage.rateLimitPercent!), resetText(usage.rateLimitResetsAt))
         : '',
       usage.secondaryPercent !== undefined
         ? t("{0} usage: {1}% remaining{2}", usage.secondaryWindowMinutes ? formatWindow(usage.secondaryWindowMinutes) : t("Other"), formatNumber(Math.max(0, 100 - usage.secondaryPercent)), resetText(usage.secondaryResetsAt))
         : '',
+      credit ? t("DeepSeek credit: {0} ({1}% remaining)", creditText, formatNumber(credit.percentLeft)) : '',
+      credit ? t("Estimated spend from local logs: {0}", formatMoney('USD', credit.estimatedSpend)) : '',
+      ...balanceLines,
       usage.contextWindow ? t("Context: {0} / {1} ({2}%)", formatTokens(context), formatTokens(usage.contextWindow), formatNumber(contextPercent!)) : t("Context: {0}", formatTokens(context)),
       usage.totalTokens !== undefined ? t("Conversation total: {0} (including cached reads)", formatTokens(usage.totalTokens)) : '',
-      plan ? '' : t("Plan usage is unavailable. For Claude, run “herdr: Enable Claude usage display”."),
+      plan || credit ? '' : t("Plan usage is unavailable. For Claude, run “herdr: Enable Claude usage display”."),
     ].filter(Boolean);
-    const shownPercent = plan ? remaining! : contextPercent;
+    const shownPercent = plan ? planPercent : credit ? credit.percentLeft : contextPercent;
     const level = plan
-      ? remaining! <= 15 ? 'high' : remaining! <= 40 ? 'mid' : ''
-      : contextPercent === null ? '' : contextPercent >= 85 ? 'high' : contextPercent >= 60 ? 'mid' : '';
-    const text = plan ? t("{0} {1}% left", shortWindow(usage.rateLimitWindowMinutes), formatNumber(remaining!)) : contextPercent !== null ? `${formatNumber(contextPercent)}%` : formatTokens(context);
+      ? planPercent! <= 15 ? 'high' : planPercent! <= 40 ? 'mid' : ''
+      : credit
+        ? credit.percentLeft <= 15 ? 'high' : credit.percentLeft <= 40 ? 'mid' : ''
+        : contextPercent === null ? '' : contextPercent >= 85 ? 'high' : contextPercent >= 60 ? 'mid' : '';
+    const text = plan
+      ? t("{0} {1}% left", shortWindow(usage.rateLimitWindowMinutes), formatNumber(planPercent!))
+      : credit ? creditText : contextPercent !== null ? `${formatNumber(contextPercent)}%` : formatTokens(context);
     return h(
       'span',
       { class: `usage ${level}`, title: lines.join('\n'), 'aria-label': lines.join('; '), tabindex: 0 },
@@ -1314,6 +1332,12 @@ function formatWindow(minutes: number): string {
     : minutes % 1440 === 0 ? [minutes / 1440, 'day']
       : minutes % 60 === 0 ? [minutes / 60, 'hour'] : [minutes, 'minute'];
   return new Intl.NumberFormat(getIntlLocale(), { style: 'unit', unit: String(unit), unitDisplay: 'long' }).format(Number(value));
+}
+
+/** 金額顯示：USD 用 US$、CNY 用 ¥，其他幣別保留代號。 */
+function formatMoney(currency: string, value: number): string {
+  const symbol = currency === 'USD' ? 'US$' : currency === 'CNY' ? '¥' : `${currency} `;
+  return `${symbol}${value.toFixed(2)}`;
 }
 
 function ring(element: HTMLElement, percent: number): HTMLElement {
