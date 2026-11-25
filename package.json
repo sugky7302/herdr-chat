@@ -2,16 +2,20 @@
   "name": "herdr-vscode",
   "displayName": "herdr Agents",
   "description": "在 VS Code 右側邊欄顯示 herdr 在目前專案的 workspace、tab、agent 與對話。",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "publisher": "arvin",
   "private": true,
   "license": "UNLICENSED",
   "engines": {
     "vscode": "^1.105.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "main": "./dist/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "viewsContainers": {
       "secondarySidebar": [
@@ -32,15 +36,47 @@
       ]
     },
     "commands": [
-      { "command": "herdr.refresh", "title": "herdr: 重新整理", "icon": "$(refresh)" },
-      { "command": "herdr.history", "title": "herdr: 歷史紀錄（切換 tab）", "icon": "$(history)" },
-      { "command": "herdr.newAgent", "title": "herdr: 新增 agent", "icon": "$(add)" }
+      {
+        "command": "herdr.refresh",
+        "title": "herdr: 重新整理",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "herdr.history",
+        "title": "herdr: 歷史紀錄（切換 tab）",
+        "icon": "$(history)"
+      },
+      {
+        "command": "herdr.newAgent",
+        "title": "herdr: 新增 agent",
+        "icon": "$(add)"
+      },
+      {
+        "command": "herdr.enableClaudeUsage",
+        "title": "herdr: 啟用 Claude 用量顯示"
+      },
+      {
+        "command": "herdr.disableClaudeUsage",
+        "title": "herdr: 停用 Claude 用量顯示"
+      }
     ],
     "menus": {
       "view/title": [
-        { "command": "herdr.history", "when": "view == herdr.chat", "group": "navigation@1" },
-        { "command": "herdr.newAgent", "when": "view == herdr.chat", "group": "navigation@2" },
-        { "command": "herdr.refresh", "when": "view == herdr.chat", "group": "navigation@3" }
+        {
+          "command": "herdr.history",
+          "when": "view == herdr.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "herdr.newAgent",
+          "when": "view == herdr.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "herdr.refresh",
+          "when": "view == herdr.chat",
+          "group": "navigation@3"
+        }
       ]
     },
     "configuration": {
@@ -64,8 +100,12 @@
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "model": { "type": "string" },
-              "effort": { "type": "string" }
+              "model": {
+                "type": "string"
+              },
+              "effort": {
+                "type": "string"
+              }
             }
           }
         },
@@ -74,22 +114,84 @@
           "description": "「新增 agent」選單中的選項。可以新增自己的選項。",
           "items": {
             "type": "object",
-            "required": ["id", "label"],
+            "required": [
+              "id",
+              "label"
+            ],
             "properties": {
-              "id": { "type": "string", "description": "選項代號。也用來產生 agent 名稱。只能用小寫英文、數字、- 與 _。" },
-              "label": { "type": "string", "description": "選單中顯示的名稱。" },
-              "kind": { "type": "string", "description": "herdr 支援的 agent 種類（例如 claude、codex、agy）。設定後使用 herdr agent start 啟動。" },
-              "command": { "type": "string", "description": "herdr 不支援的 agent 改用這個指令在 pane 內啟動。kind 與 command 只能擇一。" },
-              "args": { "type": "array", "items": { "type": "string" }, "description": "固定的啟動參數。" },
-              "models": { "type": "array", "items": { "type": "string" }, "description": "模型選單的選項。" },
-              "efforts": { "type": "array", "items": { "type": "string" }, "description": "effort 選單的選項。" },
-              "defaultModel": { "type": "string" },
-              "defaultEffort": { "type": "string" },
-              "modelArgs": { "type": "array", "items": { "type": "string" }, "description": "啟動時設定模型的參數。{model} 會換成選定的模型。" },
-              "effortArgs": { "type": "array", "items": { "type": "string" }, "description": "啟動時設定 effort 的參數。{effort} 會換成選定的 effort。" },
-              "switchModel": { "type": "string", "description": "對話中切換模型時送出的指令，例如 /model {model}。留空表示不支援對話中切換。" },
-              "switchEffort": { "type": "string", "description": "對話中切換 effort 時送出的指令，例如 /effort {effort}。留空表示不支援對話中切換。" },
-              "switchStyle": { "type": "string", "enum": ["command", "codex-menu"], "description": "codex-menu 表示操作 Codex 的 /model 選單切換（只套用到目前 session）。" }
+              "id": {
+                "type": "string",
+                "description": "選項代號。也用來產生 agent 名稱。只能用小寫英文、數字、- 與 _。"
+              },
+              "label": {
+                "type": "string",
+                "description": "選單中顯示的名稱。"
+              },
+              "kind": {
+                "type": "string",
+                "description": "herdr 支援的 agent 種類（例如 claude、codex、agy）。設定後使用 herdr agent start 啟動。"
+              },
+              "command": {
+                "type": "string",
+                "description": "herdr 不支援的 agent 改用這個指令在 pane 內啟動。kind 與 command 只能擇一。"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "固定的啟動參數。"
+              },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "模型選單的選項。"
+              },
+              "efforts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "effort 選單的選項。"
+              },
+              "defaultModel": {
+                "type": "string"
+              },
+              "defaultEffort": {
+                "type": "string"
+              },
+              "modelArgs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "啟動時設定模型的參數。{model} 會換成選定的模型。"
+              },
+              "effortArgs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "啟動時設定 effort 的參數。{effort} 會換成選定的 effort。"
+              },
+              "switchModel": {
+                "type": "string",
+                "description": "對話中切換模型時送出的指令，例如 /model {model}。留空表示不支援對話中切換。"
+              },
+              "switchEffort": {
+                "type": "string",
+                "description": "對話中切換 effort 時送出的指令，例如 /effort {effort}。留空表示不支援對話中切換。"
+              },
+              "switchStyle": {
+                "type": "string",
+                "enum": [
+                  "command",
+                  "codex-menu"
+                ],
+                "description": "codex-menu 表示操作 Codex 的 /model 選單切換（只套用到目前 session）。"
+              }
             }
           },
           "default": [
@@ -97,10 +199,26 @@
               "id": "claude",
               "label": "Claude",
               "kind": "claude",
-              "models": ["opus", "sonnet", "haiku"],
-              "efforts": ["low", "medium", "high", "xhigh", "max"],
-              "modelArgs": ["--model", "{model}"],
-              "effortArgs": ["--effort", "{effort}"],
+              "models": [
+                "opus",
+                "sonnet",
+                "haiku"
+              ],
+              "efforts": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "modelArgs": [
+                "--model",
+                "{model}"
+              ],
+              "effortArgs": [
+                "--effort",
+                "{effort}"
+              ],
               "switchModel": "/model {model}",
               "switchEffort": "/effort {effort}"
             },
@@ -108,10 +226,29 @@
               "id": "codex",
               "label": "Codex",
               "kind": "codex",
-              "models": ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"],
-              "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
-              "modelArgs": ["-m", "{model}"],
-              "effortArgs": ["-c", "model_reasoning_effort=\"{effort}\""],
+              "models": [
+                "gpt-6.2-sol",
+                "gpt-6.2-astra",
+                "gpt-6.1-terra",
+                "gpt-6.1-sol",
+                "gpt-6-astra"
+              ],
+              "efforts": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra"
+              ],
+              "modelArgs": [
+                "-m",
+                "{model}"
+              ],
+              "effortArgs": [
+                "-c",
+                "model_reasoning_effort=\"{effort}\""
+              ],
               "switchStyle": "codex-menu"
             },
             {
@@ -125,9 +262,14 @@
               "id": "antigravity",
               "label": "Antigravity",
               "kind": "agy",
-              "models": ["gemini-4-argon-high"],
+              "models": [
+                "gemini-4-argon-high"
+              ],
               "efforts": [],
-              "modelArgs": ["--model", "{model}"]
+              "modelArgs": [
+                "--model",
+                "{model}"
+              ]
             }
           ]
         }

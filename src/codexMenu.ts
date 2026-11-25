@@ -70,40 +70,78 @@ export interface DialogOption {
   /** 畫面上的原始文字。 */
   text: string;
   highlighted: boolean;
+  /** 選項下方縮排的說明。 */
+  description?: string;
 }
 
+export interface DialogPrompt {
+  /** 標題，例如「☐ 資料庫」。多個問題時會有多個標籤。 */
+  title?: string;
+  /** 問題本文。 */
+  question?: string;
+  options: DialogOption[];
+}
+
+const SEPARATOR = /^[\s│|]*[─━—\-=]{3,}[\s│|]*$/;
+
 /**
- * 從 agent 的確認畫面取出選項，例如「❯ 1. Yes」「2. No」。
- * 只取畫面最後一組連續編號的選項，避免誤抓對話內容中的編號清單。
+ * 從 agent 的確認或提問畫面取出選項，例如「❯ 1. Yes」「2. No」。
+ * 只取畫面最後一組帶游標的連續編號選項，避免誤抓對話內容中的編號清單。
  */
 export function parseDialog(screen: string): DialogOption[] {
+  return parsePrompt(screen).options;
+}
+
+export function parsePrompt(screen: string): DialogPrompt {
   const lines = screen.split('\n');
-  const groups: DialogOption[][] = [];
-  let current: DialogOption[] = [];
-  for (const line of lines) {
+  const groups: { start: number; options: DialogOption[] }[] = [];
+  let current: { start: number; options: DialogOption[] } | null = null;
+  const close = () => {
+    if (current) groups.push(current);
+    current = null;
+  };
+  lines.forEach((line, index) => {
     const match = OPTION_LINE.exec(line);
     if (match) {
       const number = Number(match[2]);
-      if (current.length && number !== current[current.length - 1].number + 1) {
-        groups.push(current);
-        current = [];
-      }
-      current.push({ number, text: match[3].trim(), highlighted: Boolean(match[1]) });
-    } else if (current.length && !line.trim()) {
-      continue;
-    } else if (current.length && /^\s{4,}\S/.test(line)) {
-      // 選項說明的換行，屬於同一組。
-      continue;
-    } else if (current.length) {
-      groups.push(current);
-      current = [];
+      const last = current?.options[current.options.length - 1];
+      if (current && last && number !== last.number + 1) close();
+      current ??= { start: index, options: [] };
+      current.options.push({ number, text: match[3].trim(), highlighted: Boolean(match[1]) });
+      return;
     }
+    if (!current) return;
+    // 空行與分隔線不會中斷選項清單（Claude 把「Chat about this」放在分隔線後面）。
+    if (!line.trim() || SEPARATOR.test(line)) return;
+    const continuation = /^[\s│|]{4,}(\S.*?)[\s│|]*$/.exec(line);
+    if (continuation) {
+      const option = current.options[current.options.length - 1];
+      option.description = option.description ? `${option.description} ${continuation[1]}` : continuation[1];
+      return;
+    }
+    close();
+  });
+  close();
+  const chosen = [...groups].reverse().find((group) => group.options.some((option) => option.highlighted));
+  if (!chosen || chosen.options.length < 2) {
+    return { options: parseUnnumbered(lines) };
   }
-  if (current.length) groups.push(current);
-  const withCursor = groups.filter((group) => group.some((option) => option.highlighted));
-  const last = withCursor[withCursor.length - 1];
-  if (last && last.length >= 2) return last;
-  return parseUnnumbered(lines);
+  return { ...promptAbove(lines, chosen.start), options: chosen.options };
+}
+
+/** 選項上方的問題與標題：往上讀到分隔線或輸入提示為止，最多 4 行。 */
+function promptAbove(lines: string[], start: number): { title?: string; question?: string } {
+  const collected: string[] = [];
+  for (let i = start - 1; i >= 0 && collected.length < 4; i--) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    if (SEPARATOR.test(line) || /^\s*(❯|>)\s/.test(line) || /^\s*[╭╰]/.test(line)) break;
+    collected.unshift(line.replace(/^[\s│|]+|[\s│|]+$/g, ''));
+  }
+  const titleIndex = collected.findIndex((line) => /^[☐☒✔✓□■]/.test(line));
+  const title = titleIndex >= 0 ? collected.splice(titleIndex, 1)[0] : undefined;
+  const question = collected.join(' ').trim() || undefined;
+  return { ...(title ? { title } : {}), ...(question ? { question } : {}) };
 }
 
 /**

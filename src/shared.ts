@@ -75,6 +75,12 @@ export interface Usage {
   /** 方案額度已使用的百分比（Codex 才有）。 */
   rateLimitPercent?: number;
   rateLimitWindowMinutes?: number;
+  /** 方案額度的重設時間（Unix 秒）。 */
+  rateLimitResetsAt?: number;
+  /** 第二個額度視窗（例如 Claude 的 7 天用量）。 */
+  secondaryPercent?: number;
+  secondaryWindowMinutes?: number;
+  secondaryResetsAt?: number;
 }
 
 export interface CompletionItem {
@@ -100,7 +106,9 @@ export interface Transcript {
   /** 等待送出的訊息（agent 工作中時排隊）。 */
   queue?: QueuedView[];
   /** agent 跳出的確認畫面中的選項。 */
-  dialog?: { number: number; text: string; highlighted: boolean }[];
+  dialog?: { number: number; text: string; highlighted: boolean; description?: string }[];
+  dialogTitle?: string;
+  dialogQuestion?: string;
   /** 終端機目前的畫面。agent 等待回應或使用者開啟終端機檢視時才有。 */
   screen?: string;
 }

@@ -607,3 +607,52 @@ a { color: var(--vscode-textLink-foreground); }
 }
 .turn.user.pending .bubble { opacity: 0.6; }
 .turn.assistant { padding-bottom: 10px; }
+
+.dialog-title { display: flex; align-items: center; gap: 8px; }
+.dialog-tag {
+  font-weight: normal;
+  font-size: 0.85em;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+.dialog-question { line-height: 1.5; }
+.option-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.option-desc { font-size: 0.88em; color: var(--vscode-descriptionForeground); line-height: 1.4; }
+
+/* 拖放檔案 */
+.drop-overlay {
+  display: none;
+  position: fixed;
+  inset: 6px;
+  z-index: 50;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 2px dashed var(--vscode-focusBorder);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-sideBar-background) 85%, var(--vscode-focusBorder));
+  color: var(--vscode-foreground);
+  pointer-events: none;
+  text-align: center;
+}
+body.dragging .drop-overlay { display: flex; }
+.drop-plus { font-size: 36px; line-height: 1; font-weight: 300; color: var(--vscode-focusBorder); }
+.drop-sub { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 120px;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 4px 12px;
+  border-radius: 12px;
+  background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-notifications-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-widget-border, var(--border));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+  transition: opacity 0.3s;
+}
+.toast.hide { opacity: 0; }

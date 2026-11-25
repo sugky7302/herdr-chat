@@ -1,0 +1,40 @@
+│                                                                                             ⣼⡿⠻⢷⣄⠈⠻⣦⠘⣿⡇⢸⣿⢃⣴⡟⠋⣁⣀⣀⣼⣧  │
+│ Memory injection starts on your second session in a project.                               ⢰⡿⢀⣀⣀⠙⠻⣦⣝⣷⣼⣧⣾⣧⡾⣋⣴⠾⠛⠛⠛⠛⠋  │
+│                                                                                            ⢈⣡⣾⠟⠛⠻⠶⣤⣽⣿⣿⣿⣿⣿⣿⣯⣥⣴⡶⠶⣶⣄⠸⣧ │
+│ `/learn-codebase` is available if the user wants to front-load the entire repo into        ⡿⠋⢁⣠⣤⣤⣤⣤⡶⣿⣿⣿⣿⣿⡿⣯⣤⣄⣀⡀ ⢿⣦⣿ │
+│ memory in a single pass (~5 minutes on a typical repo, optional). Otherwise memory builds   ⣴⡿⠋⠁⢀⣀⣤⡾⢛⣿⢿⡿⣿⠻⣦⣌⠉⠙⢻⣆⠈⠛⠋ │
+│ passively as work happens.                                                                 ⠈⣿ ⢠⣾⠟⠋⠁⣠⣾⠃⢸⡇⠹⣦⡀⠙⢿⣦ ⠙⢿⣷  │
+│                                                                                             ⠈ ⣿⡇ ⣠⡾⠛⢁⡀⢸⡇ ⠙⢿⡄ ⢻⣧⣤⣾⠃  │
+│ Live activity: http://localhost:37701                                                         ⠹⣷⣴⣿⠁ ⣾⡇⢸⡇⢸⣇⠈⣿⡀⠈⠛⠋⠁   │
+│ ✨ 30 Day Free Trial — memory runs off-plan. Get up to 100% more usage from your plan           ⠉⠁⠴⠾⠟ ⠘⢷⠈⠻⠷⠿⠟⠋      │
+│ https://cmem.ai/pro?from=welcome-hint                                                                               │
+│ How it works: `/how-it-works`                                                                                       │
+│                                                                                                                     │
+│ This message disappears once the first observation lands.                                                           │
+│                                                                                                                     │
+│                                                                                                                     │
+│ ⚠️ claude-mem has paused saving memories because you've used 95% of your 5-hour Claude limit (it stops at 95% to    │
+│ leave the rest for you). Activity during the pause isn't saved; saving starts again with new activity after 4:52    │
+│ PM, when it tries Claude again. You don't need to do anything, and restarting won't change it. (To keep saving      │
+│ through limits, pick a backup in CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER.)                                               │
+│ (Assistant: at the start of your first reply, tell the user in one sentence that claude-mem has paused saving       │
+│ memories and why. Don't restart the worker or suggest it.)                                                          │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+❯ 請使用 AskUserQuestion 工具問我一個問題：我想用哪種資料庫。給三個選項，每個選項都要有 description。不要做其他事。
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ 資料庫
+
+請問您想用哪一種資料庫？
+
+❯ 1. PostgreSQL
+     關聯式資料庫。適合需要交易、資料一致性與複雜查詢的應用。
+  2. MySQL
+     關聯式資料庫。部署簡單、生態系成熟，適合常見的網頁應用。
+  3. MongoDB
+     文件型資料庫。資料結構較有彈性，適合欄位經常變動的資料。
+  4. Type something.
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

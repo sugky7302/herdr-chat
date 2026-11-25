@@ -5,6 +5,7 @@ import type { HerdrClient } from '../herdr/client';
 import type { PaneInfo } from '../herdr/types';
 import type { Transcript } from '../shared';
 import { claudeProjectDirName, parseClaude, parseCodex, type ParsedTranscript } from './parse';
+import { readStatus } from '../claudeUsage';
 
 interface CacheEntry {
   file: string;
@@ -31,7 +32,7 @@ export class TranscriptSource {
     try {
       if (kind === 'claude') {
         const file = await this.findClaudeFile(pane);
-        if (file) return this.fromFile(pane.pane_id, 'claude', file, parseClaude);
+        if (file) return this.withClaudeStatus(pane, await this.fromFile(pane.pane_id, 'claude', file, parseClaude));
       } else if (kind === 'codex') {
         const file = await this.findCodexFile(pane);
         if (file) return this.fromFile(pane.pane_id, 'codex', file, parseCodex);
@@ -40,6 +41,26 @@ export class TranscriptSource {
       // 讀不到原生紀錄時改用終端機文字。
     }
     return this.fromTerminal(pane);
+  }
+
+  /** 加上 statusline 腳本保存的方案用量（5 小時、7 天）與上下文上限。 */
+  private async withClaudeStatus(pane: PaneInfo, transcript: Transcript): Promise<Transcript> {
+    const sessionId = pane.agent_session?.kind === 'id' ? pane.agent_session.value : undefined;
+    const status = sessionId ? await readStatus(sessionId) : null;
+    if (!status) return transcript;
+    const usage = { ...(transcript.usage ?? {}) };
+    if (status.fiveHour) {
+      usage.rateLimitPercent = status.fiveHour.usedPercent;
+      usage.rateLimitWindowMinutes = 300;
+      usage.rateLimitResetsAt = status.fiveHour.resetsAt;
+    }
+    if (status.sevenDay) {
+      usage.secondaryPercent = status.sevenDay.usedPercent;
+      usage.secondaryWindowMinutes = 10080;
+      usage.secondaryResetsAt = status.sevenDay.resetsAt;
+    }
+    if (status.contextWindow) usage.contextWindow = status.contextWindow;
+    return { ...transcript, usage };
   }
 
   private async fromFile(

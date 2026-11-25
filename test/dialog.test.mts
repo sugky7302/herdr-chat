@@ -70,3 +70,16 @@ test('解析沒有編號的選項（Claude 信任畫面）', () => {
     { number: 2, text: 'Yes, I trust this folder', highlighted: false },
   ]);
 });
+
+import { readFileSync } from 'node:fs';
+import { parsePrompt } from '../src/codexMenu.ts';
+
+test('解析 Claude 提問畫面：標題、問題、說明與分隔線後的選項', () => {
+  const screen = readFileSync(new URL('./fixtures-ask-screen.txt', import.meta.url), 'utf8');
+  const prompt = parsePrompt(screen);
+  assert.equal(prompt.title, '☐ 資料庫');
+  assert.equal(prompt.question, '請問您想用哪一種資料庫？');
+  assert.deepEqual(prompt.options.map((o) => o.text), ['PostgreSQL', 'MySQL', 'MongoDB', 'Type something.', 'Chat about this']);
+  assert.match(prompt.options[0].description ?? '', /^關聯式資料庫/);
+  assert.equal(prompt.options[0].highlighted, true);
+});

@@ -195,6 +195,14 @@ export function parseCodex(text: string): ParsedTranscript {
         outputTokens: info?.total_token_usage?.output_tokens ?? usage?.outputTokens,
         rateLimitPercent: typeof primary?.used_percent === 'number' ? primary.used_percent : usage?.rateLimitPercent,
         rateLimitWindowMinutes: primary?.window_minutes ?? usage?.rateLimitWindowMinutes,
+        rateLimitResetsAt: typeof primary?.resets_at === 'number' ? primary.resets_at : usage?.rateLimitResetsAt,
+        ...(payload.rate_limits?.secondary?.used_percent !== undefined
+          ? {
+              secondaryPercent: payload.rate_limits.secondary.used_percent,
+              secondaryWindowMinutes: payload.rate_limits.secondary.window_minutes,
+              secondaryResetsAt: payload.rate_limits.secondary.resets_at,
+            }
+          : {}),
       };
       return;
     }

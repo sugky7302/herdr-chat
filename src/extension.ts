@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Controller, describe } from './controller';
 import type { FromWebview, ToWebview } from './shared';
+import * as claudeUsage from './claudeUsage';
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new HerdrViewProvider(context);
@@ -11,6 +12,24 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('herdr.refresh', () => provider.controller.refresh()),
     vscode.commands.registerCommand('herdr.history', () => provider.post({ type: 'navigate', view: 'history' })),
     vscode.commands.registerCommand('herdr.newAgent', () => provider.post({ type: 'navigate', view: 'newAgent' })),
+    vscode.commands.registerCommand('herdr.enableClaudeUsage', async () => {
+      const choice = await vscode.window.showInformationMessage(
+        '啟用 Claude 用量顯示？',
+        {
+          modal: true,
+          detail:
+            '會修改 ~/.claude/settings.json 的 statusLine：改成先保存 Claude Code 提供的用量資料，再交給原本的 statusline 指令。終端機的狀態列不變。原本的設定會備份，可以用「herdr: 停用 Claude 用量顯示」還原。',
+        },
+        '啟用',
+      );
+      if (choice !== '啟用') return;
+      await claudeUsage.install();
+      void vscode.window.showInformationMessage('已啟用。Claude 下一次更新狀態列後就會顯示 5 小時用量。');
+    }),
+    vscode.commands.registerCommand('herdr.disableClaudeUsage', async () => {
+      await claudeUsage.uninstall();
+      void vscode.window.showInformationMessage('已還原原本的 Claude statusLine 設定。');
+    }),
     provider,
   );
 }

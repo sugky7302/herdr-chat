@@ -64,7 +64,9 @@ export class ChatView {
   /** 目前開啟的標籤選單。 */
   private openPicker: 'model' | 'effort' | null = null;
 
-  constructor(private readonly host: ChatHost) {}
+  constructor(private readonly host: ChatHost) {
+    this.installDrop();
+  }
 
   /** 建立對話頁的主體。工具列由呼叫端負責。 */
   mount(paneId: string): HTMLElement[] {
@@ -126,6 +128,7 @@ export class ChatView {
   }
 
   addAttachments(paneId: string, paths: string[]): void {
+    if (paths.length) this.flash(`已附加 ${paths.length} 個檔案`);
     const draft = this.draft(paneId);
     draft.attachments = [...new Set([...(draft.attachments ?? []), ...paths])];
     this.host.persist();
@@ -272,7 +275,7 @@ export class ChatView {
       id: `composer-${paneId}`,
       rows: 1,
       placeholder: waiting
-        ? 'agent 正在等你回應：請點選上方選項'
+        ? '請點選上方選項；選「Type something」後可在這裡輸入回答'
         : working
           ? '工作中：Enter 加入佇列，⌘/Ctrl+Enter 立即插入'
           : '輸入訊息，/ 指令，@ 檔案（Enter 送出）',
@@ -410,9 +413,7 @@ export class ChatView {
       chips.length ? h('div', { class: 'chips' }, ...chips) : null,
       textarea,
       h('div', { class: 'input-toolbar' }, ...toolbar),
-      h('div', { class: 'drop-hint' }, '放開以附加檔案（從 VS Code 檔案總管拖曳時請按住 Shift）'),
     );
-    this.attachDrop(box, paneId);
 
     this.composer.replaceChildren(
       ...this.renderDialog(paneId, transcript, agent),
@@ -530,24 +531,37 @@ export class ChatView {
     return wrap;
   }
 
+  /**
+   * 用量圓圈。有方案額度時顯示額度剩餘（Claude：5 小時；Codex：一週），否則顯示上下文用量。
+   */
   private renderUsage(usage: Usage): HTMLElement {
     const { h } = this.host;
     const context = usage.contextTokens ?? 0;
-    const percent = usage.contextWindow ? Math.min(100, (context / usage.contextWindow) * 100) : null;
+    const contextPercent = usage.contextWindow ? Math.min(100, (context / usage.contextWindow) * 100) : null;
+    const plan = usage.rateLimitPercent !== undefined;
+    const remaining = plan ? Math.max(0, 100 - usage.rateLimitPercent!) : null;
+    const windowLabel = usage.rateLimitWindowMinutes ? formatWindow(usage.rateLimitWindowMinutes) : '方案';
     const lines = [
-      `上下文：${formatTokens(context)}${usage.contextWindow ? ` / ${formatTokens(usage.contextWindow)}（${percent!.toFixed(0)}%）` : ''}`,
-      usage.totalTokens !== undefined ? `本對話累計：${formatTokens(usage.totalTokens)}（含快取讀取）` : '',
-      usage.outputTokens !== undefined ? `累計輸出：${formatTokens(usage.outputTokens)}` : '',
-      usage.rateLimitPercent !== undefined
-        ? `方案額度已用：${usage.rateLimitPercent.toFixed(0)}%${usage.rateLimitWindowMinutes ? `（${formatWindow(usage.rateLimitWindowMinutes)}）` : ''}`
+      plan
+        ? `${windowLabel}用量：剩 ${remaining!.toFixed(0)}%（已用 ${usage.rateLimitPercent!.toFixed(0)}%）${resetText(usage.rateLimitResetsAt)}`
         : '',
+      usage.secondaryPercent !== undefined
+        ? `${usage.secondaryWindowMinutes ? formatWindow(usage.secondaryWindowMinutes) : '其他'}用量：剩 ${Math.max(0, 100 - usage.secondaryPercent).toFixed(0)}%${resetText(usage.secondaryResetsAt)}`
+        : '',
+      `上下文：${formatTokens(context)}${usage.contextWindow ? ` / ${formatTokens(usage.contextWindow)}（${contextPercent!.toFixed(0)}%）` : ''}`,
+      usage.totalTokens !== undefined ? `本對話累計：${formatTokens(usage.totalTokens)}（含快取讀取）` : '',
+      plan ? '' : '沒有方案用量資料。Claude 需要執行「herdr: 啟用 Claude 用量顯示」。',
     ].filter(Boolean);
-    const level = percent === null ? '' : percent >= 85 ? 'high' : percent >= 60 ? 'mid' : '';
+    const shownPercent = plan ? remaining! : contextPercent;
+    const level = plan
+      ? remaining! <= 15 ? 'high' : remaining! <= 40 ? 'mid' : ''
+      : contextPercent === null ? '' : contextPercent >= 85 ? 'high' : contextPercent >= 60 ? 'mid' : '';
+    const text = plan ? `${shortWindow(usage.rateLimitWindowMinutes)} 剩 ${remaining!.toFixed(0)}%` : contextPercent !== null ? `${contextPercent.toFixed(0)}%` : formatTokens(context);
     return h(
       'span',
       { class: `usage ${level}`, title: lines.join('\n'), 'aria-label': lines.join('，'), tabindex: 0 },
-      percent !== null ? ring(h('span', { class: 'usage-ring' }), percent) : null,
-      h('span', { class: 'usage-text' }, percent !== null ? `${percent.toFixed(0)}%` : formatTokens(context)),
+      shownPercent !== null ? ring(h('span', { class: 'usage-ring' }), shownPercent) : null,
+      h('span', { class: 'usage-text' }, text),
     );
   }
 
@@ -597,7 +611,13 @@ export class ChatView {
       h(
         'section',
         { class: `dialog-card ${blocked ? 'blocked' : ''}`, 'aria-label': blocked ? 'agent 等待回應' : '終端機畫面' },
-        h('div', { class: 'dialog-title' }, blocked ? 'agent 正在等你回應' : '終端機畫面'),
+        h(
+          'div',
+          { class: 'dialog-title' },
+          blocked ? 'agent 正在等你回應' : '終端機畫面',
+          transcript?.dialogTitle ? h('span', { class: 'dialog-tag' }, transcript.dialogTitle.replace(/^[☐☒✔✓□■]\s*/, '')) : null,
+        ),
+        options.length && transcript?.dialogQuestion ? h('div', { class: 'dialog-question' }, transcript.dialogQuestion) : null,
         options.length ? h('details', {}, h('summary', {}, '顯示終端機畫面'), preview) : preview,
         options.length
           ? h(
@@ -611,7 +631,12 @@ export class ChatView {
                     onclick: () => send({ type: 'chooseOption', paneId, number: option.number }),
                   },
                   h('span', { class: 'option-number' }, String(option.number)),
-                  option.text,
+                  h(
+                    'span',
+                    { class: 'option-body' },
+                    h('span', { class: 'option-text' }, option.text),
+                    option.description ? h('span', { class: 'option-desc' }, option.description) : null,
+                  ),
                 ),
               ),
             )
@@ -629,25 +654,47 @@ export class ChatView {
 
   // ---------- 拖曳檔案 ----------
 
-  private attachDrop(box: HTMLElement, paneId: string): void {
+  /**
+   * 整個側邊欄都可以拖放檔案。拖曳時顯示覆蓋畫面，並把游標設成「複製」（+）。
+   * 從 VS Code 檔案總管拖曳時，VS Code 要求按住 Shift 才會把檔案交給 webview。
+   */
+  private installDrop(): void {
+    const { h } = this.host;
+    const overlay = h(
+      'div',
+      { class: 'drop-overlay', 'aria-hidden': 'true' },
+      h('div', { class: 'drop-plus' }, '+'),
+      h('div', {}, '放開以附加檔案'),
+      h('div', { class: 'drop-sub' }, '從 VS Code 檔案總管拖曳時請按住 Shift'),
+    );
+    document.body.append(overlay);
     let depth = 0;
-    box.addEventListener('dragenter', (event) => {
+    const active = () => this.paneId !== null && document.querySelector('main.pane') !== null;
+    const hasFiles = (event: DragEvent) => {
+      const types = Array.from(event.dataTransfer?.types ?? []);
+      return types.some((type) => type === 'Files' || type.includes('uri-list') || type === 'resourceurls' || type === 'codefiles');
+    };
+    window.addEventListener('dragenter', (event) => {
+      if (!active() || !hasFiles(event)) return;
       event.preventDefault();
       depth++;
-      box.classList.add('dragging');
+      document.body.classList.add('dragging');
     });
-    box.addEventListener('dragover', (event) => {
+    window.addEventListener('dragover', (event) => {
+      if (!active() || !hasFiles(event)) return;
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
     });
-    box.addEventListener('dragleave', () => {
+    window.addEventListener('dragleave', () => {
       depth = Math.max(0, depth - 1);
-      if (!depth) box.classList.remove('dragging');
+      if (!depth) document.body.classList.remove('dragging');
     });
-    box.addEventListener('drop', (event) => {
-      event.preventDefault();
+    window.addEventListener('drop', (event) => {
       depth = 0;
-      box.classList.remove('dragging');
+      document.body.classList.remove('dragging');
+      if (!active()) return;
+      event.preventDefault();
+      const paneId = this.paneId!;
       const data = event.dataTransfer;
       if (!data) return;
       const uriList = data.getData('application/vnd.code.uri-list') || data.getData('text/uri-list');
@@ -668,6 +715,15 @@ export class ChatView {
       const files = Array.from(data.files);
       if (files.length) void this.uploadFiles(paneId, files);
     });
+  }
+
+  /** 附加成功後短暫顯示提示。 */
+  private flash(text: string): void {
+    const { h } = this.host;
+    const toast = h('div', { class: 'toast', role: 'status' }, text);
+    document.body.append(toast);
+    setTimeout(() => toast.classList.add('hide'), 1600);
+    setTimeout(() => toast.remove(), 2000);
   }
 
   private async uploadFiles(paneId: string, files: File[]): Promise<void> {
@@ -800,7 +856,8 @@ export class ChatView {
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
-      submit(event.metaKey || event.ctrlKey ? 'now' : 'queue');
+      const waiting = Boolean(this.transcript?.paneId === paneId && this.transcript.dialog?.length);
+      submit(event.metaKey || event.ctrlKey || waiting ? 'now' : 'queue');
       return;
     }
     if (event.key === 'Escape' && this.host.agent(paneId)?.status === 'working') {
@@ -830,3 +887,19 @@ function ring(element: HTMLElement, percent: number): HTMLElement {
   return element;
 }
 
+
+function shortWindow(minutes: number | undefined): string {
+  if (!minutes) return '';
+  if (minutes === 10080) return '週';
+  if (minutes % 60 === 0 && minutes < 1440) return `${minutes / 60}h`;
+  if (minutes % 1440 === 0) return `${minutes / 1440}d`;
+  return `${minutes}m`;
+}
+
+function resetText(resetsAt: number | undefined): string {
+  if (!resetsAt) return '';
+  const date = new Date(resetsAt * 1000);
+  const sameDay = date.toDateString() === new Date().toDateString();
+  const time = date.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `，${sameDay ? '' : `${date.getMonth() + 1}/${date.getDate()} `}${time} 重設`;
+}

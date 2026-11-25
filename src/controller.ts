@@ -19,7 +19,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import { Commands } from './commands';
 import { TranscriptSource } from './transcript/source';
-import { effortLabel, menuKind, nextKey, normalizeLabel, parseDialog, parseMenu, type MenuKind } from './codexMenu';
+import { effortLabel, menuKind, nextKey, normalizeLabel, parseDialog, parseMenu, parsePrompt, type MenuKind } from './codexMenu';
 
 const run = promisify(execFile);
 
@@ -309,8 +309,13 @@ export class Controller implements vscode.Disposable {
     // 所以只要 pane 有 agent 就讀取畫面，偵測到選項時顯示按鈕。
     if (pane.agent || this.screenPanes.has(paneId)) {
       const screen = await this.readScreen(paneId).catch(() => undefined);
-      const dialog = screen && pane.agent ? parseDialog(screen) : [];
-      if (dialog.length) transcript.dialog = dialog;
+      const prompt = screen && pane.agent ? parsePrompt(screen) : { options: [] };
+      const dialog = prompt.options;
+      if (dialog.length) {
+        transcript.dialog = dialog;
+        transcript.dialogTitle = prompt.title;
+        transcript.dialogQuestion = prompt.question;
+      }
       if (this.screenPanes.has(paneId) || dialog.length || pane.agent_status === 'blocked') transcript.screen = screen;
     }
     transcript.queue = (this.queues.get(paneId) ?? []).map(({ id, text, attachments }) => ({ id, text, attachments }));
@@ -489,6 +494,12 @@ export class Controller implements vscode.Disposable {
       effort: options.effort,
     };
     const busy = pane.agent_status === 'working' || pane.agent_status === 'blocked';
+    // agent 停在提問畫面（例如選了「Type something.」）時，把文字直接打進畫面上的輸入欄。
+    if (options.mode === 'now' && parseDialog(await this.readScreen(paneId).catch(() => '')).length) {
+      await this.client.request('pane.send_input', { pane_id: paneId, text, keys: ['enter'] });
+      this.scheduleRefresh(300);
+      return;
+    }
     const queue = this.queues.get(paneId) ?? [];
     if (options.mode !== 'now' && (busy || queue.length || this.delivering.has(paneId))) {
       queue.push(message);
