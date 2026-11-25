@@ -149,28 +149,32 @@ function promptAbove(lines: string[], start: number): { title?: string; question
  *   ❯ No, exit
  *     Yes, I trust this folder
  * 以游標所在行為準，往上下收集縮排相同的相鄰行。
+ *
+ * 注意：Claude Code 的使用者訊息也是以 `❯ ` 開頭並自動換行縮排 2 格，
+ * 所以無編號選單必須同時看到確認操作提示（例如 `Enter to confirm`、`Enter to select`）或位於最後一個 `❯` 區段且符合選單特徵。
  */
+const UNNUMBERED_MENU_HINT = /(?:Enter to (?:confirm|select|continue)|↑\/↓|Use arrow keys|Esc to cancel)/i;
+
 function parseUnnumbered(lines: string[]): DialogOption[] {
+  if (!UNNUMBERED_MENU_HINT.test(lines.slice(-15).join('\n'))) return [];
   const strip = (line: string) => line.replace(/^[\s│|]*/, '').replace(/[\s│|]*$/, '');
   for (let i = lines.length - 1; i >= 0; i--) {
     const match = /^([\s│|]*)(❯|›)\s+(\S.*?)[\s│|]*$/.exec(lines[i]);
     if (!match || /^\d+\./.test(match[3])) continue;
-    const column = match[1].length;
     const textColumn = lines[i].indexOf(match[3]);
     const sameColumn = (line: string) => {
       const text = strip(line);
-      return text !== '' && line.indexOf(text) === textColumn && !/^(❯|›)/.test(text);
+      return text !== '' && !SEPARATOR.test(line) && line.indexOf(text) === textColumn && !/^(❯|›)/.test(text);
     };
     let start = i;
     while (start > 0 && sameColumn(lines[start - 1])) start--;
     let end = i;
     while (end < lines.length - 1 && sameColumn(lines[end + 1])) end++;
-    if (end === start) return [];
+    if (end === start) continue;
     const options: DialogOption[] = [];
     for (let k = start; k <= end; k++) {
       options.push({ number: options.length + 1, text: k === i ? match[3].trim() : strip(lines[k]), highlighted: k === i });
     }
-    void column;
     return options;
   }
   return [];

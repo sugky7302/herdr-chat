@@ -49,6 +49,78 @@ function fixture(language = 'zh-TW', browserLanguage = 'en-US') {
   return { window, document, sent, paneId, state, transcript, emit, input, messages, updateState, updateTranscript };
 }
 
+test('沒有可讀紀錄時聊天區保持空白，不顯示終端機文字與後備提示', async () => {
+  for (const language of ['zh-TW', 'en']) {
+    for (const status of ['idle', 'working', 'blocked']) {
+      const f = fixture(language);
+      try {
+        f.state.tabs[0].agents[0].status = status; f.updateState();
+        f.transcript.source = 'terminal';
+        f.transcript.messages = [{ role: 'terminal', text: '$ codex\nTerminal output only' }];
+        f.updateTranscript();
+        assert.equal(f.messages().childElementCount, 0, `${language}/${status}`);
+        assert.equal(f.messages().textContent, '');
+        assert.ok(f.input().isConnected, '保留輸入框');
+      } finally { await f.window.happyDOM.close(); }
+    }
+  }
+});
+
+test('原生紀錄沒有訊息時保持空白，收到可讀訊息後正常顯示', async () => {
+  for (const source of ['claude', 'codex', 'agy', 'dsh']) {
+    const f = fixture();
+    try {
+      f.transcript.source = source;
+      f.transcript.messages = []; f.updateTranscript();
+      assert.equal(f.messages().childElementCount, 0, source);
+      f.transcript.messages = [{ role: 'assistant', text: '已讀取新的對話紀錄。' }]; f.updateTranscript();
+      assert.match(f.messages().textContent!, /已讀取新的對話紀錄。/);
+      assert.ok(f.messages().querySelector('.thinking'), '收到可讀紀錄後保留工作狀態');
+    } finally { await f.window.happyDOM.close(); }
+  }
+});
+
+test('隱藏終端機文字時保留可讀訊息、工具輸出與錯誤通知', async () => {
+  const f = fixture();
+  try {
+    f.transcript.source = 'terminal';
+    f.transcript.messages = [
+      { role: 'terminal', text: 'Raw terminal snapshot' },
+      { role: 'user', text: '請檢查執行結果' },
+      { role: 'tool', tool: 'Bash', text: 'Actual command output' },
+      { role: 'assistant', text: '檢查完成。' },
+      { role: 'notice', text: 'This pane is closed.' },
+    ];
+    f.updateTranscript();
+    assert.equal(f.messages().querySelector('.terminal'), null);
+    assert.doesNotMatch(f.messages().textContent!, /Raw terminal snapshot/);
+    assert.match(f.messages().textContent!, /請檢查執行結果/);
+    assert.match(f.messages().textContent!, /Actual command output/);
+    assert.match(f.messages().textContent!, /檢查完成。/);
+    assert.match(f.messages().textContent!, /This pane is closed\./);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('沒有可讀紀錄時仍可送出訊息，終端機回顯不會移除待確認訊息', async () => {
+  const f = fixture();
+  try {
+    f.state.tabs[0].agents[0].status = 'idle'; f.updateState();
+    f.transcript.source = 'terminal';
+    f.transcript.messages = [{ role: 'terminal', text: '$ codex' }]; f.updateTranscript();
+    const input = f.input(); input.value = '開始新的工作'; input.dispatchEvent(new f.window.Event('input'));
+    f.document.querySelector<DOMButton>('button.send-button')!.click();
+    assert.equal(f.sent.find((message) => message.type === 'send')?.text, '開始新的工作');
+    assert.match(f.messages().querySelector('.turn.user.pending')!.textContent, /開始新的工作/);
+    f.transcript.messages = [{ role: 'terminal', text: '$ codex\n開始新的工作' }]; f.updateTranscript();
+    assert.match(f.messages().querySelector('.turn.user.pending')!.textContent, /開始新的工作/);
+    assert.equal(f.messages().querySelector('.terminal'), null);
+    f.transcript.source = 'codex';
+    f.transcript.messages = [{ role: 'user', text: '開始新的工作' }]; f.updateTranscript();
+    assert.equal(f.messages().querySelectorAll('.turn.user').length, 1);
+    assert.equal(f.messages().querySelector('.turn.user.pending'), null);
+  } finally { await f.window.happyDOM.close(); }
+});
+
 function queueFixture(attachments: string[] = []) {
   const f = fixture();
   f.transcript.queue = [{ id: 7, text: '原本的佇列訊息', attachments }]; f.updateTranscript();
@@ -821,6 +893,7 @@ test('工作中手動展開執行紀錄，完成後自動摺疊，並保留一�
     f.updateTranscript();
     let groups = f.document.querySelectorAll<DOMDetails>('.turn-log');
     assert.equal(groups.length, 2);
+    assert.equal(f.document.querySelector('.thinking'), null, '已有思考中標題時不重複顯示最底下的工作中');
     assert.equal(groups[0].open, false, '歷史回合保持摺疊');
     assert.equal(groups[1].open, false, '沿用工具區塊預設摺疊的樣式');
     assert.match(groups[0].querySelector('summary')!.textContent, /8s/);
@@ -940,5 +1013,37 @@ test('問題內容改為下拉選單：點按鈕展開，點外面關閉；對�
     assert.equal(f.input(), null);
     f.click('[data-agent-pane="wE:p2"]');
     assert.equal(f.document.querySelector('main.task')!.getAttribute('data-pane-id'), 'wE:p2');
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('使用者訊息中的附加檔案與圖片路徑顯示為與輸入框相同的檔案標籤', async () => {
+  const f = fixture();
+  try {
+    f.transcript.messages = [
+      { role: 'user', text: '修正這個畫面\n\n@"/Users/user/Desktop/截圖 2026-11-26 凌晨1.58.50.png"' },
+    ];
+    f.updateTranscript();
+    const bubble = f.document.querySelector('.turn.user .bubble')!;
+    const chip = bubble.querySelector('.bubble-chips .chip')!;
+    assert.ok(chip, '對話泡泡內顯示檔案 chip');
+    assert.equal(chip.querySelector('.chip-text')!.textContent, '截圖 2026-11-26 凌晨1.58.50.png');
+    assert.equal(bubble.querySelector('.bubble-text')!.textContent, '修正這個畫面');
+    assert.doesNotMatch(bubble.textContent!, /@"\/Users/);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('思考中秒數每秒自動遞增更新，不需切換頁面', async () => {
+  const f = fixture();
+  try {
+    const start = Date.now() - 2000;
+    f.transcript.messages = [
+      { role: 'user', text: '執行長任務', timestamp: start },
+      { role: 'tool', tool: 'Bash', text: 'sleep 5', timestamp: start + 1000 },
+    ];
+    f.updateTranscript();
+    const count = () => f.document.querySelector('.turn-log.active > summary > .tool-count')!.textContent!;
+    assert.match(count(), /思考中… [23]s/);
+    await new Promise((resolve) => f.window.setTimeout(resolve, 1100));
+    assert.match(count(), /思考中… [34]s/);
   } finally { await f.window.happyDOM.close(); }
 });

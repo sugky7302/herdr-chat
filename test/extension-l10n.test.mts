@@ -20,7 +20,11 @@ const bundle = await build({
           ${common}
           export class Controller {
             constructor() { state().constructedLocale = getLocale(); }
-            dispose() {}
+            dispose() {
+              const host = state();
+              host.disposeCalls = (host.disposeCalls ?? 0) + 1;
+              return host.disposePromise;
+            }
             async refresh() {}
           }
           export function describe(error) { return String(error); }
@@ -45,7 +49,7 @@ const bundle = await build({
     },
   }],
 });
-const { activate } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+const { activate, deactivate } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
 test('activation reads vscode.env.language before controller setup and passes that locale to the webview', async () => {
   const globals = globalThis as typeof globalThis & { __herdrLocaleHost?: any };
@@ -85,6 +89,45 @@ test('activation reads vscode.env.language before controller setup and passes th
         assert.match(question, /Claude/);
       }
       for (const subscription of context.subscriptions as { dispose(): void }[]) subscription.dispose();
+      await deactivate();
     }
   } finally { delete globals.__herdrLocaleHost; }
 });
+
+for (const subscriptionsFirst of [false, true]) {
+  test(`deactivate 等待協作關閉，並且只清理一次（subscriptionsFirst=${subscriptionsFirst}）`, async () => {
+    const globals = globalThis as typeof globalThis & { __herdrLocaleHost?: any };
+    let finish!: () => void;
+    const state: any = {
+      language: 'zh-tw', notices: [], commands: {}, focusedCommands: [], posted: [],
+      disposePromise: new Promise<void>((resolve) => { finish = resolve; }),
+    };
+    const uri = (fsPath: string) => ({ fsPath, toString: () => fsPath });
+    const context = {
+      storageUri: uri('/test/workspace-storage'), globalStorageUri: uri('/test/global-storage'), extensionUri: uri('/test/extension'),
+      workspaceState: {}, globalState: {}, subscriptions: [] as { dispose(): void }[],
+    };
+    try {
+      globals.__herdrLocaleHost = state;
+      activate(context);
+      if (subscriptionsFirst) for (const subscription of context.subscriptions) subscription.dispose();
+      let closed = false;
+      const shutdown = deactivate();
+      assert.ok(shutdown instanceof Promise);
+      void shutdown.then(() => { closed = true; });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(closed, false, 'VS Code 必須等待協作釋放鎖');
+      for (const subscription of context.subscriptions) subscription.dispose();
+      assert.equal(state.disposeCalls, 1);
+      finish();
+      await shutdown;
+      await deactivate();
+      assert.equal(closed, true);
+      assert.equal(state.disposeCalls, 1);
+    } finally {
+      finish();
+      await deactivate();
+      delete globals.__herdrLocaleHost;
+    }
+  });
+}

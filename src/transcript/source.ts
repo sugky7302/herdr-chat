@@ -21,7 +21,6 @@ interface CacheEntry {
  */
 export class TranscriptSource {
   private cache = new Map<string, CacheEntry>();
-  private codexFileByPane = new Map<string, string>();
   private dshFileByPane = new Map<string, string>();
 
   constructor(
@@ -129,27 +128,11 @@ export class TranscriptSource {
   private async findCodexFile(pane: PaneInfo): Promise<string | null> {
     const session = pane.agent_session;
     if (session?.kind === 'path') return session.value;
+    // 同一個工作目錄可以有多個 agent；缺少身分時，只能讀取這個 pane 的終端機。
+    if (session?.kind !== 'id' || !session.value) return null;
     const files = await recentCodexFiles();
-    if (session?.kind === 'id') {
-      const match = files.find((file) => file.includes(session.value));
-      // A known session must never fall back to another agent's transcript in the same checkout.
-      return match ?? null;
-    }
-    // 沒有 session id 時，用工作目錄找最近更新的紀錄。
-    // 同一目錄同時有多個 Codex 時可能配錯，所以記住第一次的結果。
-    const remembered = this.codexFileByPane.get(pane.pane_id);
-    if (remembered && (await exists(remembered))) return remembered;
-    const cwd = pane.foreground_cwd ?? pane.cwd;
-    if (!cwd) return null;
-    const claimed = new Set(this.codexFileByPane.values());
-    for (const file of files) {
-      if (claimed.has(file)) continue;
-      if ((await codexSessionCwd(file)) === cwd) {
-        this.codexFileByPane.set(pane.pane_id, file);
-        return file;
-      }
-    }
-    return null;
+    // 明確的 session 找不到紀錄時，也不可改讀另一個 agent 的對話。
+    return files.find((file) => file.includes(session.value)) ?? null;
   }
 
   private async findAgyFile(pane: PaneInfo): Promise<string | null> {
@@ -307,22 +290,6 @@ async function recentCodexFiles(): Promise<string[]> {
     }
   }
   return files.sort((a, b) => b.mtime - a.mtime).map((entry) => entry.file);
-}
-
-async function codexSessionCwd(file: string): Promise<string | null> {
-  const handle = await fs.open(file, 'r');
-  try {
-    const buffer = Buffer.alloc(64 * 1024);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    // 第一行含有很長的系統指示，可能超過讀取範圍，所以用正規表示式找 cwd。
-    const head = buffer.subarray(0, bytesRead).toString('utf8').split('\n')[0];
-    const match = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(head);
-    return match ? JSON.parse(`"${match[1]}"`) : null;
-  } catch {
-    return null;
-  } finally {
-    await handle.close();
-  }
 }
 
 function dshSessionRoots(): string[] {

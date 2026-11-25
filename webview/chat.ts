@@ -62,7 +62,7 @@ export class ChatView {
   transcript: Transcript | null = null;
   readonly screenOpen = new Set<string>();
   /** 已送出、還沒出現在紀錄中的訊息。 */
-  private pending: Record<string, { text: string; at: number }[]> = {};
+  private pending: Record<string, { text: string; attachments?: string[]; at: number }[]> = {};
   private queueEdits: Record<string, QueueEdit> = {};
   private paneId: string | null = null;
   private messages: HTMLElement | null = null;
@@ -79,6 +79,9 @@ export class ChatView {
   private stickToBottom = true;
   /** 保留手動開關狀態；目前回合完成時自動摺疊。 */
   private readonly toolGroups = new Map<string, { open: boolean; active: boolean }>();
+  /** 進行中回合的即時秒數計時器與起始時間。 */
+  private thinkingTimer: number | undefined;
+  private activeTurnStart = new Map<string, number>();
   /** 目前開啟的標籤選單。 */
   private openPicker: 'model' | 'effort' | null = null;
 
@@ -134,7 +137,7 @@ export class ChatView {
   setTranscript(next: Transcript): void {
     const list = this.pending[next.paneId];
     if (list?.length) {
-      const seen = next.messages.filter((m) => m.role === 'user' || m.role === 'terminal').map((m) => m.text);
+      const seen = next.messages.filter((m) => m.role === 'user').map((m) => m.text);
       const queued = (next.queue ?? []).map((item) => item.text);
       const now = Date.now();
       // 紀錄中出現、已進入佇列，或超過 15 秒的「傳送中」訊息都移除，避免同一則訊息顯示兩次。
@@ -248,12 +251,11 @@ export class ChatView {
       if (!transcript) {
         items.push(h('div', { class: 'muted pad' }, h('span', { class: 'spinner' }), t("Loading conversation…")));
       } else {
-        if (transcript.source === 'terminal' && transcript.messages[0]?.role === 'terminal') {
-          items.push(h('div', { class: 'notice' }, t("No readable conversation is available for this agent. The terminal output is shown below.")));
-        }
-        items.push(...this.renderTurns(transcript.messages, agent));
-        for (const item of this.pending[paneId] ?? []) items.push(this.renderUser(item.text, true));
-        if (agent?.status === 'working') {
+        const turns = this.renderTurns(transcript.messages, agent);
+        items.push(...turns);
+        for (const item of this.pending[paneId] ?? []) items.push(this.renderUser(item.text, true, item.attachments));
+        const hasThinkingHeader = turns.some((node) => node.querySelector('.turn-log.active'));
+        if (agent?.status === 'working' && items.length > 0 && !hasThinkingHeader) {
           items.push(h('div', { class: 'thinking' }, h('span', { class: 'spinner' }), t("Working…")));
         }
       }
@@ -263,6 +265,7 @@ export class ChatView {
           if (group.dataset.toolKey === focusedTool) group.querySelector('summary')?.focus({ preventScroll: true });
         }
       }
+      this.syncThinkingTimer();
     }
     this.renderComposer();
     if (this.messages.isConnected) {
@@ -446,8 +449,28 @@ export class ChatView {
       }
       flushToolBatch(lastToolIdx);
 
-      const durationText = turnDurationText(currentUserTs, items);
       const isTurnActive = working && items[items.length - 1].index === lastIndex;
+      const recordedMs = turnDurationMs(currentUserTs, items);
+      const explicitStart = turnStartTime(currentUserTs, items);
+      let activeStart = explicitStart;
+      if (isTurnActive) {
+        if (activeStart !== undefined) {
+          this.activeTurnStart.set(groupKey, activeStart);
+        } else {
+          activeStart = this.activeTurnStart.get(groupKey);
+        }
+      } else {
+        this.activeTurnStart.delete(groupKey);
+      }
+      // 只有起始時間屬於最近 1 小時內的即時對話，才用 Date.now() 動態累計秒數；否則使用紀錄中的時間差。
+      const now = Date.now();
+      const isLiveStart = activeStart !== undefined && activeStart <= now && now - activeStart < 3_600_000;
+      const activeMs = isLiveStart
+        ? Math.max(recordedMs ?? 1000, now - activeStart!)
+        : recordedMs;
+      const durationText = (isTurnActive ? activeMs : recordedMs) !== undefined
+        ? formatDurationMs((isTurnActive ? activeMs : recordedMs)!)
+        : undefined;
       const headerLabel = isTurnActive
         ? durationText
           ? t('Thinking… {0}', durationText)
@@ -463,7 +486,12 @@ export class ChatView {
       );
       const outerDetails = h(
         'details',
-        { class: `tool-group turn-log${isTurnActive ? ' active' : ''}`, open, 'data-tool-key': groupKey },
+        {
+          class: `tool-group turn-log${isTurnActive ? ' active' : ''}`,
+          open,
+          'data-tool-key': groupKey,
+          ...(isTurnActive ? { 'data-turn-start': String(isLiveStart ? activeStart! : now - (recordedMs ?? 0)) } : {}),
+        },
         h('summary', {}, count),
         logBody,
       );
@@ -483,6 +511,8 @@ export class ChatView {
     };
 
     messages.forEach((message, index) => {
+      // 略過後備終端機文字，保留可讀訊息的原始索引。
+      if (message.role === 'terminal' && this.transcript?.source === 'terminal') return;
       if (message.role === 'user') {
         flushTurn();
         userText = message.text;
@@ -508,6 +538,30 @@ export class ChatView {
     return out;
   }
 
+  private syncThinkingTimer(): void {
+    window.clearInterval(this.thinkingTimer);
+    this.thinkingTimer = undefined;
+    const activeLog = this.messages?.querySelector<HTMLElement>('.turn-log.active[data-turn-start]');
+    if (!activeLog) return;
+    const key = activeLog.dataset.toolKey;
+    let start = Number(activeLog.dataset.turnStart);
+    if (!Number.isFinite(start) || start <= 0) start = Date.now();
+    if (key && !this.activeTurnStart.has(key)) this.activeTurnStart.set(key, start);
+    this.thinkingTimer = window.setInterval(() => {
+      const node = this.messages?.querySelector<HTMLElement>('.turn-log.active[data-turn-start]');
+      if (!node || !node.isConnected) {
+        window.clearInterval(this.thinkingTimer);
+        this.thinkingTimer = undefined;
+        return;
+      }
+      const count = node.querySelector<HTMLElement>(':scope > summary > .tool-count');
+      if (!count) return;
+      const label = t('Thinking… {0}', formatDurationMs(Math.max(1000, Date.now() - start)));
+      const spinner = count.querySelector('.spinner') ?? this.host.h('span', { class: 'spinner' });
+      count.replaceChildren(spinner, label);
+    }, 1000);
+  }
+
   private appendMemoryAction(parent: HTMLElement, message: ChatMessage, messageIndex: number, body: Element): void {
     if (!this.host.saveMemory || !this.paneId || !message.text.trim()) return;
     const paneId = this.paneId;
@@ -522,12 +576,27 @@ export class ChatView {
     }, t("Save as memory"))));
   }
 
-  private renderUser(text: string, pending = false): HTMLElement {
-    const { h } = this.host;
+  private renderUser(text: string, pending = false, extraAttachments?: string[]): HTMLElement {
+    const { h, icon } = this.host;
+    const parsed = splitUserAttachments(text);
+    const files = [...parsed.attachments, ...(extraAttachments ?? []).filter((f) => !parsed.attachments.includes(f))];
+    const chips = files.map((file) =>
+      h(
+        'span',
+        { class: 'chip', title: file },
+        icon('file'),
+        h('span', { class: 'chip-text' }, file.split('/').pop() ?? file),
+      ),
+    );
     return h(
       'div',
       { class: `turn user ${pending ? 'pending' : ''}`, 'aria-label': pending ? t("Your message (sending)") : t("Your message") },
-      h('div', { class: 'bubble', title: pending ? t("Sending") : undefined }, text),
+      h(
+        'div',
+        { class: 'bubble', title: pending ? t("Sending") : undefined },
+        chips.length ? h('div', { class: 'bubble-chips' }, ...chips) : null,
+        parsed.body ? h('div', { class: 'bubble-text' }, parsed.body) : null,
+      ),
     );
   }
 
@@ -657,7 +726,7 @@ export class ChatView {
         model: draft.modelDirty ? draft.model : undefined,
         effort: draft.effortDirty ? draft.effort : undefined,
       });
-      if (!working || mode === 'now') (this.pending[paneId] ??= []).push({ text, at: Date.now() });
+      if (!working || mode === 'now') (this.pending[paneId] ??= []).push({ text, attachments: [...attachments], at: Date.now() });
       draft.text = '';
       draft.attachments = [];
       draft.modelDirty = false;
@@ -1364,6 +1433,25 @@ function resetText(resetsAt: number | undefined): string {
   return t(', resets {0}', `${day}${time}`);
 }
 
+/**
+ * 將使用者訊息尾端或行內的 `@"path/to/file"` 與 `@path/to/file` 附加檔案拆成附件清單與純文字，
+ * 讓對話泡泡顯示與輸入框相同的檔案標籤（chip）。
+ */
+export function splitUserAttachments(text: string): { body: string; attachments: string[] } {
+  const attachments: string[] = [];
+  const tokenPattern = /@"([^"\n]+)"|@((?:\/|\.\.?\/|~\/)[^\s]+|[^\s@]+\.[A-Za-z0-9]{1,10})(?=\s|$)/g;
+  const body = text
+    .replace(tokenPattern, (_full, quoted: string | undefined, unquoted: string | undefined) => {
+      const file = (quoted ?? unquoted ?? '').trim();
+      if (file && !attachments.includes(file)) attachments.push(file);
+      return '';
+    })
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return { body, attachments };
+}
+
 /** 工具呼叫的一行摘要。提問工具只顯示問題文字，不顯示 JSON。 */
 function toolSummary(tool: string | undefined, text: string): string {
   if (tool === 'AskUserQuestion' || /^\{"questions"/.test(text)) {
@@ -1483,15 +1571,22 @@ export function formatDurationMs(ms: number): string {
   return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
 }
 
-function turnDurationText(userTimestamp: number | undefined, items: { message: ChatMessage }[]): string | undefined {
+function turnStartTime(userTimestamp: number | undefined, items: { message: ChatMessage }[]): number | undefined {
   let start = userTimestamp;
-  let end: number | undefined;
   for (const { message } of items) {
     const t0 = message.timestamp;
-    const t1 = message.endTimestamp ?? message.timestamp;
     if (t0 !== undefined && (start === undefined || t0 < start)) start = t0;
+  }
+  return start;
+}
+
+function turnDurationMs(userTimestamp: number | undefined, items: { message: ChatMessage }[]): number | undefined {
+  const start = turnStartTime(userTimestamp, items);
+  let end: number | undefined;
+  for (const { message } of items) {
+    const t1 = message.endTimestamp ?? message.timestamp;
     if (t1 !== undefined && (end === undefined || t1 > end)) end = t1;
   }
   if (start === undefined || end === undefined || end < start) return undefined;
-  return formatDurationMs(end - start);
+  return end - start;
 }

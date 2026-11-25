@@ -71,6 +71,20 @@ test('解析沒有編號的選項（Claude 信任畫面）', () => {
   ]);
 });
 
+test('Claude 畫面上的多行使用者訊息不會被誤判成選項', () => {
+  const screen = `❯ 我不喜歡現在的對話、協作、記憶 tab，應該改成下拉式選單
+  或者其他浮動式對話框，然後放在重新對話按鈕的左邊。另外
+  ，agent的呈現我比較喜歡以前的樣子，點一下agent再進入對
+  話
+
+● 已完成修改。
+
+────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────`;
+  assert.deepEqual(parseDialog(screen), []);
+});
+
 import { readFileSync } from 'node:fs';
 import { parsePrompt } from '../src/codexMenu.ts';
 import { parseStatus } from '../src/claudeUsage.ts';

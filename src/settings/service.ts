@@ -30,6 +30,10 @@ export interface SettingsHost {
 const arrayFields = ['args', 'models', 'efforts', 'modelArgs', 'effortArgs', 'slashCommands'] as const;
 const textFields = ['kind', 'command', 'defaultModel', 'defaultEffort', 'switchModel', 'switchEffort'] as const;
 
+function plainClone<T>(value: T): T {
+  return value === undefined ? value : JSON.parse(JSON.stringify(value)) as T;
+}
+
 /** Validate before replacing a whole settings array; preserve extension-specific extra fields. */
 export function validatePresets(raw: unknown): AgentPreset[] {
   if (!Array.isArray(raw) || raw.length > 100 || JSON.stringify(raw).length > 512_000) {
@@ -69,7 +73,7 @@ export function validatePresets(raw: unknown): AgentPreset[] {
     }
     if (item.switchStyle !== undefined && !['command', 'codex-menu'].includes(item.switchStyle as string)) fail(t('The model switching style is invalid.'));
   }
-  return structuredClone(raw) as AgentPreset[];
+  return plainClone(raw) as AgentPreset[];
 }
 
 function revision(config: SettingsConfiguration): string {
@@ -119,8 +123,8 @@ export class SettingsService {
     if (this.skillPaths.size > 10_000) this.skillPaths = new Map(skills.status === 'fulfilled' ? skills.value.skills.map((skill) => [skill.id, skill.path]) : []);
     return {
       scope, revision: revision(config), workspaceAvailable: config.workspaceAvailable, workspaceLabel: config.workspaceLabel,
-      inherited: config.inherited, presets: structuredClone(normalizePresets(config.presets)), projectDefaults: structuredClone(config.projectDefaults),
-      catalog: structuredClone(AGENT_CATALOG), diagnostics: config.diagnostics,
+      inherited: config.inherited, presets: plainClone(normalizePresets(config.presets)), projectDefaults: plainClone(config.projectDefaults),
+      catalog: plainClone(AGENT_CATALOG), diagnostics: config.diagnostics,
       integrations: integrations.status === 'fulfilled' ? integrations.value : [],
       integrationError: integrations.status === 'rejected' ? errorMessage(integrations.reason) : undefined,
       skills: skills.status === 'fulfilled' ? skills.value.skills : [],

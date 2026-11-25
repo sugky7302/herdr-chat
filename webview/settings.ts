@@ -24,6 +24,7 @@ export class SettingsView {
   private draft: DraftPreset[] = [];
   private baseline = '[]';
   private selected = 0;
+  private modalOpen = false;
   private loadId?: string;
   private pending?: { id: string; kind: 'save' | 'reset' | 'integration' };
   private sequence = 0;
@@ -101,6 +102,7 @@ export class SettingsView {
     this.draft = copy(this.snapshot?.presets ?? []).map((value) => ({ value }));
     this.baseline = JSON.stringify(this.values());
     this.selected = Math.max(0, Math.min(this.selected, this.draft.length - 1));
+    this.modalOpen = false;
   }
   private changed(): void { this.notice = ''; this.renderSaveBar(); }
   private confirm(text: string, action: () => void): void {
@@ -233,10 +235,14 @@ export class SettingsView {
         ...this.draft.map((item, index) => h('div', { class: 'settings-agent-row' },
           h('input', { type: 'checkbox', checked: item.value.enabled !== false, disabled: Boolean(this.pending || this.loadId), 'aria-label': t('Enable {0} in agent menus', item.value.label),
             onchange: (event: Event) => { item.value.enabled = (event.target as HTMLInputElement).checked; this.changed(); } }),
-          h('button', { class: `settings-agent-choice ${index === this.selected ? 'selected' : ''}`, 'data-preset-index': index, 'aria-pressed': String(index === this.selected),
-            onclick: () => { this.selected = index; this.render(); } }, h('strong', {}, item.value.label || item.value.id), h('code', {}, item.value.id)))),
+          h('button', { class: `settings-agent-choice ${this.modalOpen && index === this.selected ? 'selected' : ''}`, 'data-preset-index': index, 'aria-pressed': String(this.modalOpen && index === this.selected),
+            onclick: () => { this.selected = index; this.modalOpen = true; this.render(); this.element?.querySelector<HTMLInputElement>('#settings-agent-label')?.focus(); } },
+            h('strong', {}, item.value.label || item.value.id),
+            h('code', {}, item.value.id),
+            h('span', { class: 'settings-agent-edit-hint', 'aria-hidden': 'true' }, this.host.icon('edit'))))),
       ),
-      this.draft.length ? this.renderEditor(this.draft[this.selected]) : h('p', { class: 'muted' }, t('No agent presets. Add one from the catalog below.')),
+      !this.draft.length ? h('p', { class: 'muted' }, t('No agent presets. Add one from the catalog below.')) : null,
+      this.modalOpen && this.draft[this.selected] ? this.renderEditorModal(this.draft[this.selected]) : null,
       h('div', { class: 'settings-actions' },
         h('button', { class: 'secondary settings-add-custom', disabled: Boolean(this.pending || this.loadId), onclick: () => this.addPreset({ id: 'custom', label: t('Custom agent'), command: '', models: [], efforts: [] }) }, t('Add custom agent')),
         h('button', { class: 'link', disabled: Boolean(this.pending || this.loadId), onclick: () => this.reset() }, t('Reset this scope'))),
@@ -252,8 +258,69 @@ export class SettingsView {
     let id = preset.id;
     for (let suffix = 2; this.draft.some((item) => item.value.id === id); suffix++) id = `${preset.id}-${suffix}`;
     this.draft.push({ value: { ...copy(preset), id, enabled: true } }); this.selected = this.draft.length - 1;
+    this.modalOpen = true;
     this.notice = ''; this.render();
     this.element?.querySelector<HTMLInputElement>('#settings-agent-label')?.focus();
+  }
+
+  private closeModal(): void {
+    if (!this.modalOpen) return;
+    this.modalOpen = false;
+    this.render();
+  }
+
+  private renderEditorModal(item: DraftPreset): HTMLElement {
+    const h = this.host.h;
+    const editor = this.renderEditor(item);
+    return h(
+      'div',
+      {
+        class: 'settings-modal-backdrop',
+        onclick: (event: MouseEvent) => {
+          if (event.target === event.currentTarget) this.closeModal();
+        },
+        onkeydown: (event: KeyboardEvent) => {
+          if (event.key === 'Escape') {
+            event.stopPropagation();
+            this.closeModal();
+          }
+        },
+      },
+      h(
+        'div',
+        { class: 'settings-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('Edit agent preset') },
+        h(
+          'div',
+          { class: 'settings-modal-header' },
+          h('strong', {}, `${t('Edit agent preset')} · ${item.value.label || item.value.id}`),
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'icon-button settings-modal-close',
+              title: t('Close'),
+              'aria-label': t('Close'),
+              onclick: () => this.closeModal(),
+            },
+            this.host.icon('close'),
+          ),
+        ),
+        h('div', { class: 'settings-modal-body' }, editor),
+        h(
+          'div',
+          { class: 'settings-modal-footer' },
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'secondary settings-modal-done',
+              onclick: () => this.closeModal(),
+            },
+            t('Close'),
+          ),
+        ),
+      ),
+    );
   }
 
   private catalogCard(agent: CatalogAgent): HTMLElement {
@@ -331,7 +398,7 @@ export class SettingsView {
         h('p', { class: 'muted' }, t('Configure args, modelArgs, effortArgs, switchModel, switchEffort, switchStyle, and slashCommands as JSON. Templates use {model} and {effort}.')),
         advanced, h('p', { class: 'settings-advanced-error settings-inline-error', role: 'alert' }, item.advancedError ?? '')),
       h('button', { class: 'link settings-remove-preset', onclick: () => {
-        this.draft.splice(this.selected, 1); this.selected = Math.max(0, this.selected - 1); this.notice = ''; this.render();
+        this.draft.splice(this.selected, 1); this.selected = Math.max(0, this.selected - 1); this.modalOpen = false; this.notice = ''; this.render();
       } }, t('Remove this preset from the menu')),
     );
   }

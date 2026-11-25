@@ -19,13 +19,14 @@ export function createSettingsHost(controller: Controller): SettingsHost {
         : folderTarget ? inspected?.workspaceFolderValue : inspected?.workspaceValue;
       const presets = scope === 'user' ? inspected?.globalValue ?? inspected?.defaultValue
         : (folderTarget ? inspected?.workspaceFolderValue : undefined) ?? inspected?.workspaceValue ?? inspected?.globalValue ?? inspected?.defaultValue;
+      const plain = <T>(value: T): T => value === undefined ? value : JSON.parse(JSON.stringify(value)) as T;
       return {
         scope, workspaceKey: JSON.stringify([vscode.workspace.workspaceFile?.toString(), resource?.toString(), root]),
         workspaceRoot: root, workspaceAvailable: Boolean(vscode.workspace.workspaceFile || vscode.workspace.workspaceFolders?.length),
         workspaceLabel: resource ? vscode.workspace.getWorkspaceFolder(resource)?.name : vscode.workspace.name,
-        presets, inherited: ownValue === undefined,
-        projectDefaults: settings.get<Record<string, { model?: string; effort?: string }>>('agentDefaults') ?? {},
-        revisionData: inspected,
+        presets: plain(presets), inherited: ownValue === undefined,
+        projectDefaults: plain(settings.get<Record<string, { model?: string; effort?: string }>>('agentDefaults') ?? {}),
+        revisionData: plain(inspected),
         diagnostics: {
           connected: Boolean(controller.currentState()?.connected), socketPath: controller.client.socketPath,
           nodePath: settings.get<string>('collaborationNodePath') || 'node',

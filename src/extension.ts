@@ -8,9 +8,12 @@ import { SettingsService } from './settings/service';
 import { createSettingsHost } from './settings/vscodeHost';
 import type { SettingsSnapshot } from './settings/types';
 
+let activeProvider: HerdrViewProvider | undefined;
+
 export function activate(context: vscode.ExtensionContext): void {
   setLocale(vscode.env.language);
   const provider = new HerdrViewProvider(context);
+  activeProvider = provider;
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('herdr.chat', provider, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -43,7 +46,14 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
-export function deactivate(): void {}
+export async function deactivate(): Promise<void> {
+  const provider = activeProvider;
+  try {
+    await provider?.dispose();
+  } finally {
+    if (activeProvider === provider) activeProvider = undefined;
+  }
+}
 
 class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   readonly controller: Controller;
@@ -51,6 +61,7 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
   private view: vscode.WebviewView | undefined;
   private webviewReady = false;
   private settingsRequested = false;
+  private disposal?: Promise<void>;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const workspaceKey = createHash('sha256').update(
@@ -64,8 +75,8 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.settings = new SettingsService(createSettingsHost(this.controller));
   }
 
-  dispose(): void {
-    this.controller.dispose();
+  dispose(): Promise<void> {
+    return this.disposal ??= Promise.resolve(this.controller.dispose());
   }
 
   post(message: ToWebview): void {

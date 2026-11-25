@@ -56,7 +56,12 @@ test('settings is reachable before initial state, disconnected, and without a He
   try {
     f.enter();
     assert.ok(f.document.querySelector('main.settings'));
+    assert.equal(f.document.querySelector('.settings-modal'), null, '預設不展開編輯視窗');
+    f.click('[data-preset-index="0"]');
+    assert.ok(f.document.querySelector('.settings-modal'), '點擊 agent 後彈出置中懸浮窗');
     assert.equal(f.document.querySelector<DOMInput>('#settings-agent-label')!.value, 'Claude');
+    f.click('.settings-modal-close');
+    assert.equal(f.document.querySelector('.settings-modal'), null, '關閉懸浮窗');
     f.poll();
     assert.ok(f.document.querySelector('main.settings'));
     assert.match(f.document.querySelector('.settings-body')!.textContent, /Project defaults override preset defaults/);
@@ -69,6 +74,7 @@ test('background state polling preserves settings draft, focus, selection, templ
   const f = fixture();
   try {
     f.enter();
+    f.click('[data-preset-index="0"]');
     const label = f.edit('#settings-agent-label', 'Planning Claude'); label.focus(); label.setSelectionRange(2, 7);
     f.poll();
     assert.ok(f.document.querySelector('#settings-agent-label') === label);
@@ -97,6 +103,7 @@ test('invalid advanced JSON survives section switches and blocks save; stale rep
   const f = fixture();
   try {
     f.enter();
+    f.click('[data-preset-index="0"]');
     f.edit('#settings-agent-advanced', '{ "modelArgs": [');
     f.click('[data-settings-section="skills"]');
     f.click('[data-settings-section="agents"]');
@@ -120,7 +127,9 @@ test('invalid advanced JSON survives section switches and blocks save; stale rep
 test('dirty settings require confirmation on scope changes and navigation', async () => {
   const f = fixture();
   try {
-    f.enter(); f.edit('#settings-agent-label', 'Unsaved');
+    f.enter();
+    f.click('[data-preset-index="0"]');
+    f.edit('#settings-agent-label', 'Unsaved');
     const scope = f.document.querySelector<DOMSelect>('#settings-scope')!;
     scope.value = 'workspace'; scope.dispatchEvent(new f.window.Event('change'));
     assert.equal(scope.value, 'user');

@@ -84,6 +84,7 @@ export class Controller implements vscode.Disposable {
   private refreshing: Promise<void> | null = null;
   private refreshAgain = false;
   private readonly disposables: vscode.Disposable[] = [];
+  private disposal?: Promise<void>;
   readonly collaboration: CollaborationService;
   private readonly collaborationReady: Promise<void>;
   private collaborationError: string | undefined;
@@ -136,8 +137,12 @@ export class Controller implements vscode.Disposable {
     this.events.on('disconnected', () => this.scheduleRefresh(0));
     this.events.on('subscribeFailed', () => this.scheduleRefresh(500));
     this.events.start();
-    // 事件可能漏接（例如終端機標題改變），所以另外每 5 秒檢查一次。
-    this.pollTimer = setInterval(() => this.scheduleRefresh(0), 5000);
+    // 事件可能漏接（例如終端機標題改變或執行中的對話紀錄更新），所以工作中每 1.5 秒、平時每 3 秒檢查一次。
+    this.pollTimer = setInterval(() => {
+      const pane = this.openPaneId ? this.pane(this.openPaneId) : undefined;
+      if (pane?.agent_status === 'working' || pane?.agent_status === 'blocked') void this.pushTranscript();
+      this.scheduleRefresh(0);
+    }, 1500);
     this.disposables.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.gitRoot = null;
@@ -153,12 +158,14 @@ export class Controller implements vscode.Disposable {
     );
   }
 
-  dispose(): void {
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
     clearTimeout(this.refreshTimer);
     clearInterval(this.pollTimer);
     this.events.dispose();
-    void this.collaboration.dispose().catch(() => undefined);
+    this.disposal = this.collaboration.dispose().catch(() => undefined);
     this.disposables.forEach((item) => item.dispose());
+    return this.disposal;
   }
 
   /** 選項清單。專案設定 herdr.agentDefaults 會覆蓋選項的預設模型與 effort。 */
@@ -712,7 +719,7 @@ export class Controller implements vscode.Disposable {
         await this.syncDshPrefs(model, effort);
       }
       await this.sendShellLine(paneId, buildShellCommand(preset, model, effort));
-      await this.waitForCustomAgent(paneId);
+      await this.waitForCustomAgent(paneId, preset.id);
     }
     await this.refresh();
     return paneId;
@@ -793,15 +800,26 @@ export class Controller implements vscode.Disposable {
     }
   }
 
-  /** 等待自訂指令啟動的 agent（例如 dsh-tui 透過 report-agent 回報狀態），最多等待 8 秒。 */
-  private async waitForCustomAgent(paneId: string): Promise<void> {
+  /** 等待自訂指令啟動的 agent（例如 dsh-tui 透過 report-agent 回報狀態），並為其設定唯一 agent 名稱。 */
+  private async waitForCustomAgent(paneId: string, presetId: string): Promise<void> {
     const end = Date.now() + 8000;
     while (Date.now() < end) {
       const snap = await this.client.snapshot().catch(() => null);
       if (snap) {
         this.snapshot = snap;
-        const found = snap.panes.find((p) => p.pane_id === paneId)?.agent ?? snap.agents.find((a) => a.pane_id === paneId)?.agent;
-        if (found) return;
+        const pane = snap.panes.find((p) => p.pane_id === paneId);
+        const agent = snap.agents.find((a) => a.pane_id === paneId);
+        const found = pane?.agent ?? agent?.agent;
+        if (found) {
+          const hasName = pane?.name ?? agent?.name;
+          if (!hasName) {
+            const taken = snap.agents.map((a) => a.name ?? '').filter(Boolean);
+            await this.client
+              .request('agent.rename', { target: paneId, name: agentName(presetId, taken) })
+              .catch(() => undefined);
+          }
+          return;
+        }
       }
       await sleep(300);
     }
@@ -976,15 +994,36 @@ export class Controller implements vscode.Disposable {
     }
     if (next.presetId) await this.rememberPane(paneId, next);
     this.assertPlannerWritable(paneId);
-    await this.client.request('agent.prompt', { target: paneId, text });
+    await this.sendAgentPrompt(paneId, text);
     await this.recordDeliveredMessage(task?.id, paneId, text);
     this.scheduleRefresh(300);
+  }
+
+  /** 送出文字給已辨識的 agent；若該 agent 尚未命名（例如自訂指令透過 report-agent 回報），先自動命名，失敗則退回直接寫入 pane。 */
+  private async sendAgentPrompt(paneId: string, text: string): Promise<void> {
+    const pane = this.pane(paneId);
+    if (pane?.agent && !pane.name) {
+      const taken = (this.snapshot?.agents ?? []).map((a) => a.name ?? '').filter(Boolean);
+      const base = this.paneMemory()[paneId]?.presetId || pane.agent;
+      await this.client
+        .request('agent.rename', { target: paneId, name: agentName(base, taken) })
+        .catch(() => undefined);
+    }
+    try {
+      await this.client.request('agent.prompt', { target: paneId, text });
+    } catch (error) {
+      if (error instanceof HerdrError || /not an active named agent/i.test(describe(error))) {
+        await this.sendShellLine(paneId, text);
+        return;
+      }
+      throw error;
+    }
   }
 
   /** 送出斜線指令並等待 agent 回到可輸入狀態。 */
   private async prompt(paneId: string, text: string): Promise<void> {
     this.assertPlannerWritable(paneId);
-    await this.client.request('agent.prompt', { target: paneId, text });
+    await this.sendAgentPrompt(paneId, text);
     await this.client
       .request('agent.wait', { target: paneId, until: ['idle', 'done', 'blocked'], timeout_ms: 8000 }, 10000)
       .catch(() => undefined);
@@ -999,7 +1038,7 @@ export class Controller implements vscode.Disposable {
 
   async sendKeys(paneId: string, keys: string[]): Promise<void> {
     const pane = this.pane(paneId);
-    if (pane?.agent) await this.client.request('agent.send_keys', { target: paneId, keys });
+    if (pane?.agent && pane.name) await this.client.request('agent.send_keys', { target: paneId, keys });
     else await this.client.request('pane.send_keys', { pane_id: paneId, keys });
     await sleep(250);
     await this.pushTranscript();
@@ -1203,7 +1242,7 @@ export class Controller implements vscode.Disposable {
 
   async interrupt(paneId: string): Promise<void> {
     const pane = this.pane(paneId);
-    if (pane?.agent) await this.client.request('agent.send_keys', { target: paneId, keys: ['esc'] });
+    if (pane?.agent && pane.name) await this.client.request('agent.send_keys', { target: paneId, keys: ['esc'] });
     else await this.client.request('pane.send_keys', { pane_id: paneId, keys: ['ctrl+c'] });
   }
 

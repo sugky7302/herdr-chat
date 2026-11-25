@@ -382,3 +382,38 @@ test('skill opening requires a discovered ID and rejects a file redirected by a 
   await fs.symlink(otherFile, skillFile);
   await assert.rejects(f.service.skillPath('discovered-skill'), /file moved/);
 });
+
+test('VS Code Proxy configuration values can be loaded without structuredClone errors', async () => {
+  const f = fixture();
+  const proxiedPreset = new Proxy(preset('claude'), {});
+  const proxiedDefaults = new Proxy({ claude: { model: 'sonnet' } }, {});
+  const host: SettingsHost = {
+    read(scope) {
+      return {
+        scope,
+        workspaceKey: 'workspace:/repo/a',
+        workspaceRoot: '/repo/a',
+        workspaceAvailable: true,
+        workspaceLabel: '/repo/a',
+        inherited: false,
+        presets: new Proxy([proxiedPreset], {}),
+        projectDefaults: proxiedDefaults,
+        revisionData: new Proxy({ globalValue: [proxiedPreset] }, {}),
+        diagnostics: {
+          connected: true,
+          socketPath: '/test/herdr.sock',
+          nodePath: 'node',
+          claudeMemUrl: '',
+          trusted: true,
+        },
+        async write() {},
+      };
+    },
+    request: f.service['host'].request,
+    scanSkills: f.service['host'].scanSkills,
+  };
+  const service = new SettingsService(host);
+  const snapshot = await service.load('user');
+  assert.equal(snapshot.presets[0].id, 'claude');
+  assert.deepEqual(snapshot.projectDefaults, { claude: { model: 'sonnet' } });
+});
