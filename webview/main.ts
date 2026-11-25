@@ -605,6 +605,7 @@ const taskView: TaskView = new TaskView({
   title: tabTitle,
   paneToolbar: renderPaneToolbar,
   openAgent: (paneId) => { if (route?.view !== 'pane' || route.paneId !== paneId) chat.clearTranscript(); go({ view: 'pane', paneId }); },
+  openTab: (tabId) => go({ view: 'tab', tabId }),
   history: () => go({ view: 'history' }),
   newAgent: (tabId) => go({ view: 'newAgent', tabId }),
 }, taskUi);
@@ -645,6 +646,13 @@ function renderPane(paneId: string): HTMLElement {
   const found = findAgent(paneId);
   return found ? taskView.mount(found.tab, paneId) : h('main', { class: 'empty' }, h('span', { class: 'spinner' }), t("Loading agent…"));
 }
+
+document.addEventListener('click', (event) => {
+  if (!(event.target as Element | null)?.closest?.('.task-page-picker')) taskView.closePageMenu();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') taskView.closePageMenu();
+});
 
 render();
 send({ type: 'ready' });

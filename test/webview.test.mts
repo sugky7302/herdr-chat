@@ -367,7 +367,7 @@ test('問題導覽維持同一範圍，agent 切換器只出現在對話', async
     const other = { ...structuredClone(f.task), id: 'task-2', tabId: 'wE:t2', title: '另一個問題', requests: [], events: [], memoryReferences: [{ id: 99, title: '另一個問題的記憶', savedAt: '2026-01-01T10:03:00Z' }] };
     f.state.tabs.push({ tabId: 'wE:t2', label: '另一個問題', number: 2, focused: false, status: 'idle', agents: [{ ...f.state.tabs[0].agents[2], paneId: 'wE:p4' }] });
     f.updateState(); f.emitTasks([f.task, other]);
-    f.click('[aria-label="歷史紀錄"]');
+    f.emit({ type: 'navigate', view: 'history' });
     const row = Array.from(f.document.querySelectorAll<DOMButton>('.list .row')).find((item) => item.textContent.includes('另一個問題'))!;
     row.click(); f.click('[data-task-page="memory"]');
     assert.match(f.document.querySelector('.task-content')!.textContent, /Claude-mem #99/);
@@ -384,6 +384,7 @@ test('記憶草稿保留來源與編輯內容，只有真正回傳 memory ID 才
     f.updateState(); f.emitTasks();
     assert.ok(f.document.querySelector('#task-memory-text') === text, '背景更新不能重建記憶編輯框');
     assert.equal(text.value, '整理後的決策，不是原文。');
+    f.click('[data-task-page="chat"]');
     f.click('[data-agent-pane="wE:p2"]');
     assert.equal(f.document.querySelector<DOMTextArea>('#task-memory-text')!.value, text.value);
     assert.match(f.document.querySelector('.task-provenance')!.textContent, /claude/);
@@ -448,7 +449,9 @@ test('交接等待真正接手事件，暫存回覆且保留原始派工歷史',
     assert.match(f.document.querySelector('.task-request-heading')!.textContent, /Claude.*Codex-impl/);
     assert.equal(f.document.querySelector('[data-request-id="R-01"]') !== null, true);
     f.click('[data-task-page="chat"]');
+    f.click('[data-agent-pane="wE:p1"]');
     assert.equal(f.input().disabled, true, '舊規劃者接手後保留唯讀');
+    f.click('[data-task-page="chat"]');
     f.click('[data-agent-pane="wE:p3"]');
     assert.equal(f.input().disabled, false, '新規劃者可以繼續對話');
   } finally { await f.window.happyDOM.close(); }
@@ -535,7 +538,7 @@ test('已關閉問題的歷史仍能讀取協作與記憶，沒有執行操作',
     const archived = { ...structuredClone(f.task), id: 'old-task', tabId: 'wE:t-old', title: '已結束的登入問題', status: 'archived' };
     const otherCheckout = { ...structuredClone(archived), id: 'other-checkout', tabId: 'wE:t-other', checkoutPath: '/tmp/other-worktree', title: '其他 worktree 的問題' };
     f.emitTasks([f.task, archived, otherCheckout]);
-    f.click('[aria-label="歷史紀錄"]');
+    f.emit({ type: 'navigate', view: 'history' });
     assert.match(f.document.querySelector('.task-archive-list')!.textContent, /已結束的登入問題/);
     assert.doesNotMatch(f.document.querySelector('.task-archive-list')!.textContent, /其他 worktree/);
     f.click('[data-archive-tab="wE:t-old"]');
@@ -630,6 +633,7 @@ test('原生權限等待不提供 answer，派送失敗與 worker 失敗回報�
     const request = f.task.requests[0];
     request.status = 'needs_input'; request.runtimeStatus = 'blocked'; request.error = '原生 agent 等待權限或選單';
     delete request.report; f.emitTasks();
+    f.click('[data-task-page="chat"]');
     assert.match(f.document.querySelector('[data-agent-pane="wE:p2"]')!.textContent, /等待原生權限或選單/);
     f.click('[data-task-page="collaboration"]');
     assert.equal(f.document.querySelector('.task-answer-text'), null);
@@ -639,6 +643,7 @@ test('原生權限等待不提供 answer，派送失敗與 worker 失敗回報�
     assert.equal(f.sent.filter((message) => message.type === 'answerTaskRequest').length, 0);
 
     request.status = 'failed'; request.error = '送出前原 session 已不存在'; f.emitTasks();
+    f.click('[data-task-page="chat"]');
     assert.match(f.document.querySelector('[data-agent-pane="wE:p2"]')!.textContent, /派送失敗/);
     assert.doesNotMatch(f.document.querySelector('[data-agent-pane="wE:p2"]')!.textContent, /已回報失敗/);
     f.click('[data-task-page="collaboration"]');
@@ -653,12 +658,14 @@ test('原生權限等待不提供 answer，派送失敗與 worker 失敗回報�
 test('English display language localizes navigation, accessibility and memory controls while preserving user content', async () => {
   const f = collaborationFixture('en-US');
   try {
-    assert.deepEqual(Array.from(f.document.querySelectorAll('.task-tab')).map((item) => item.textContent), ['Chat', 'Collaboration', 'Memory']);
+    assert.deepEqual(Array.from(f.document.querySelectorAll('.task-page-item')).map((item) => item.textContent), ['Chat', 'Collaboration', 'Memory']);
     assert.equal(f.input().getAttribute('aria-label'), 'Message');
     assert.match(f.input().placeholder, /Working: Enter to queue/);
     assert.equal(f.document.querySelector('.send-button')!.getAttribute('aria-label'), 'Queue message');
     assert.match(f.document.querySelector('.task-planner')!.textContent, /Planner: Claude/);
+    f.click('[data-task-page="chat"]');
     assert.match(f.document.querySelector('[data-agent-pane="wE:p2"]')!.textContent, /Running/);
+    f.click('[data-agent-pane="wE:p1"]');
 
     const original = '取消 / Save as memory / {0} / /專案/auth.ts';
     f.transcript.messages = [{ role: 'assistant', text: original }]; f.updateTranscript();
@@ -910,5 +917,28 @@ test('暫時無法取得 agent 狀態時，不會誤判工作已完成', async (
     assert.equal(f.document.querySelector<DOMDetails>('.turn-log')!.open, true);
     f.state.tabs[0].agents[0].status = 'done'; f.updateState();
     assert.equal(f.document.querySelector<DOMDetails>('.turn-log')!.open, false);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('問題內容改為下拉選單：點按鈕展開，點外面關閉；對話回到 agent 清單', async () => {
+  const f = collaborationFixture();
+  try {
+    const menu = () => f.document.querySelector<DOMElement>('.task-page-menu')!;
+    assert.equal(menu().hidden, true);
+    f.click('.task-page-button');
+    assert.equal(menu().hidden, false);
+    assert.equal(f.document.querySelector('.task-page-button')!.getAttribute('aria-expanded'), 'true');
+    f.document.body.click();
+    assert.equal(menu().hidden, true);
+    f.click('.task-page-button'); f.click('[data-task-page="memory"]');
+    assert.equal(menu().hidden, true);
+    assert.equal(f.document.querySelector('main.task')!.getAttribute('data-page'), 'memory');
+    f.click('.task-back');
+    assert.equal(f.document.querySelector('main.task')!.getAttribute('data-pane-id'), 'wE:p1', '從記憶返回原本的對話');
+    f.click('.task-back');
+    assert.ok(f.document.querySelector('.task-agent-list'), '從對話返回 agent 清單');
+    assert.equal(f.input(), null);
+    f.click('[data-agent-pane="wE:p2"]');
+    assert.equal(f.document.querySelector('main.task')!.getAttribute('data-pane-id'), 'wE:p2');
   } finally { await f.window.happyDOM.close(); }
 });

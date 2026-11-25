@@ -2,7 +2,7 @@
   "name": "herdr-vscode",
   "displayName": "herdr Agents",
   "description": "%extension.description%",
-  "version": "0.5.0",
+  "version": "0.5.2",
   "publisher": "arvin",
   "repository": {
     "type": "git",

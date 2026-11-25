@@ -31,6 +31,8 @@ export interface TaskHost {
   title(tab: TabView): string;
   paneToolbar(paneId: string): HTMLElement;
   openAgent(paneId: string): void;
+  /** 回到 tab 的 agent 清單。 */
+  openTab(tabId: string): void;
   history(): void;
   newAgent(tabId: string): void;
 }
@@ -89,7 +91,9 @@ export class TaskView {
   private tab: TabView | null = null;
   private root: HTMLElement | null = null;
   private heading: HTMLElement | null = null;
-  private navigation: HTMLElement | null = null;
+  /** 路由指定的 pane。只有在對話頁面才顯示聊天；沒有值時顯示 agent 清單。 */
+  private routePane: string | undefined;
+  private pageMenuOpen = false;
   private handoffSlot: HTMLElement | null = null;
   private memorySlot: HTMLElement | null = null;
   private feedback: HTMLElement | null = null;
@@ -155,7 +159,7 @@ export class TaskView {
   }
 
   acceptsTranscript(paneId: string): boolean {
-    return Boolean(this.root?.isConnected && this.page() === 'chat' && this.paneId() === paneId);
+    return Boolean(this.root?.isConnected && this.page() === 'chat' && this.routePane === paneId);
   }
 
   private operationId(): string {
@@ -165,12 +169,12 @@ export class TaskView {
   mount(tab: TabView, paneId?: string): HTMLElement {
     const { h } = this.host;
     this.heading = h('div', { class: 'task-heading' });
-    this.navigation = h('div', { class: 'task-navigation', role: 'tablist', 'aria-label': t("Task content") });
     this.handoffSlot = h('div', { class: 'task-handoff-slot' });
     this.memorySlot = h('div', { class: 'task-memory-slot' });
     this.feedback = h('div', { class: 'task-feedback', role: 'status', 'aria-live': 'polite', hidden: true });
-    this.content = h('div', { class: 'task-content', role: 'tabpanel' });
-    this.root = h('main', { class: 'task', 'data-tab-id': tab.tabId }, this.heading, this.navigation,
+    this.content = h('div', { class: 'task-content', id: 'task-panel' });
+    this.pageMenuOpen = false;
+    this.root = h('main', { class: 'task', 'data-tab-id': tab.tabId }, this.heading,
       h('div', { class: 'task-editors' }, this.handoffSlot, this.memorySlot), this.feedback, this.content);
     this.contentKey = this.handoffKey = this.memoryKey = this.dispatchKey = this.recordsKey = '';
     this.refresh(tab, paneId);
@@ -180,13 +184,13 @@ export class TaskView {
 
   refresh(tab: TabView, paneId?: string): void {
     this.tab = tab;
+    this.routePane = paneId && tab.agents.some((agent) => agent.paneId === paneId) ? paneId : undefined;
     if (this.task()?.status === 'archived' && this.page() === 'chat') this.ui.pages[tab.tabId] = 'collaboration';
     const selected = paneId ?? this.ui.selectedPanes[tab.tabId];
     this.ui.selectedPanes[tab.tabId] = tab.agents.some((agent) => agent.paneId === selected)
       ? selected! : (tab.agents.find((agent) => agent.focused) ?? tab.agents[0])?.paneId ?? '';
     if (!this.root) return;
     this.renderHeading();
-    this.renderNavigation();
     this.renderHandoff();
     this.renderMemoryEditor();
     const feedback = this.feedbackByTab[tab.tabId];
@@ -197,14 +201,67 @@ export class TaskView {
   }
 
   private refreshCurrent(): void {
-    if (this.tab) this.refresh(this.tab);
+    if (this.tab) this.refresh(this.tab, this.routePane);
   }
 
+  /** 「對話」回到 agent 清單；協作與記憶在目前位置切換內容。 */
   private setPage(page: TaskPage): void {
     if (!this.tab) return;
+    this.pageMenuOpen = false;
     this.ui.pages[this.tab.tabId] = page;
     this.host.persist();
-    this.refreshCurrent();
+    if (page === 'chat' && this.routePane) this.host.openTab(this.tab.tabId);
+    else this.refreshCurrent();
+  }
+
+  /** 從外部（例如 VS Code 指令）切換頁面。 */
+  showPage(page: TaskPage): void {
+    if (page === 'chat' && this.task()?.status === 'archived') return;
+    this.setPage(page);
+  }
+
+  private back(): void {
+    const tab = this.tab!;
+    const archived = this.task()?.status === 'archived';
+    if (!archived && this.page() !== 'chat') {
+      // 從協作或記憶返回原本的位置（對話或 agent 清單）。
+      this.ui.pages[tab.tabId] = 'chat';
+      this.host.persist();
+      this.refreshCurrent();
+    } else if (!archived && this.routePane) this.host.openTab(tab.tabId);
+    else this.host.history();
+  }
+
+  /** 頁面選單：對話、協作、記憶。放在重新命名按鈕的左邊，點開後浮在內容上方。 */
+  private renderPageMenu(): HTMLElement {
+    const { h } = this.host;
+    const archived = this.task()?.status === 'archived';
+    const items: [TaskPage, string][] = [['chat', t("Chat")], ['collaboration', t("Collaboration")], ['memory', t("Memory")]];
+    const current = items.find(([page]) => page === this.page())!;
+    const menu = h('div', { class: 'task-page-menu', role: 'menu', 'aria-label': t("Task content"), hidden: !this.pageMenuOpen },
+      ...items.map(([page, title]) => h('button', {
+        class: 'task-page-item', type: 'button', role: 'menuitemradio', 'data-task-page': page,
+        'aria-checked': String(this.page() === page),
+        disabled: page === 'chat' && archived, title: page === 'chat' && archived ? t("The original pane is closed") : undefined,
+        onclick: () => this.setPage(page),
+      }, title)));
+    const toggle = h('button', {
+      class: 'task-page-button', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': String(this.pageMenuOpen),
+      title: t("Task content"), 'aria-label': `${t("Task content")}：${current[1]}`,
+      onclick: (event: Event) => {
+        event.stopPropagation();
+        this.pageMenuOpen = !this.pageMenuOpen;
+        this.renderHeading();
+      },
+    }, h('span', {}, current[1]), h('span', { class: 'task-page-caret', 'aria-hidden': 'true' }));
+    return h('div', { class: 'task-page-picker' }, toggle, menu);
+  }
+
+  /** 點選單外面或按 Esc 關閉頁面選單。 */
+  closePageMenu(): void {
+    if (!this.pageMenuOpen || !this.heading) return;
+    this.pageMenuOpen = false;
+    this.renderHeading();
   }
 
   jumpToPane(paneId: string): void {
@@ -212,6 +269,13 @@ export class TaskView {
     this.ui.pages[this.tab.tabId] = 'chat';
     this.host.persist();
     this.host.openAgent(paneId);
+  }
+
+  private backButton(): HTMLElement {
+    const archived = this.task()?.status === 'archived';
+    const toAgents = !archived && (Boolean(this.routePane) || this.page() !== 'chat');
+    const label = toAgents ? t("Back to agents") : t("History");
+    return this.host.h('button', { class: 'icon-button task-back', title: label, 'aria-label': label, onclick: () => this.back() }, this.host.icon('back'));
   }
 
   private renderHeading(): void {
@@ -226,9 +290,10 @@ export class TaskView {
       ? pending ? t("Previous planner: {0} · paused for handoff", identityName(planner)) : t("Planner: {0}", identityName(planner))
       : t("No collaboration planner enabled");
     const toolbar = h('div', { class: 'toolbar task-title' },
-      h('button', { class: 'icon-button', title: t("History"), 'aria-label': t("History"), onclick: () => this.host.history() }, this.host.icon('back')),
+      this.backButton(),
       h('h2', { title: this.host.title(tab) }, this.host.title(tab)),
       h('div', { class: 'spacer' }),
+      this.renderPageMenu(),
       task?.status !== 'archived' ? h('button', { class: 'icon-button', title: t("Rename task"), 'aria-label': t("Rename task"), onclick: () => this.host.send({ type: 'renameTab', tabId: tab.tabId }) }, this.host.icon('edit')) : null);
     const plannerRow = h('div', { class: 'task-planner' }, h('span', { class: 'task-planner-label' }, plannerText));
     if (planner && delivery && task?.status !== 'archived' && !pending) plannerRow.append(h('span', { class: 'task-planner-delivery', 'data-delivery-status': delivery.status },
@@ -263,24 +328,11 @@ export class TaskView {
     }
   }
 
-  private renderNavigation(): void {
-    const { h } = this.host;
-    const items: [TaskPage, string][] = [['chat', t("Chat")], ['collaboration', t("Collaboration")], ['memory', t("Memory")]];
-    this.navigation!.replaceChildren(...items.map(([page, title]) => h('button', {
-      id: `task-tab-${page}`, class: 'task-tab', type: 'button', role: 'tab',
-      'aria-selected': String(this.page() === page), 'aria-controls': 'task-panel', 'data-task-page': page,
-      disabled: page === 'chat' && this.task()?.status === 'archived', title: page === 'chat' && this.task()?.status === 'archived' ? t("The original pane is closed") : undefined,
-      onclick: () => this.setPage(page),
-    }, title)));
-    this.content!.id = 'task-panel';
-    this.content!.setAttribute('aria-labelledby', `task-tab-${this.page()}`);
-  }
-
   private renderContent(): void {
     const { h, chat } = this.host;
     const tab = this.tab!;
     const page = this.page();
-    const paneId = this.paneId();
+    const paneId = this.routePane;
     this.root!.classList.toggle('pane', page === 'chat' && Boolean(paneId));
     this.root!.dataset.page = page;
     this.root!.dataset.paneId = page === 'chat' ? paneId ?? '' : '';
@@ -289,14 +341,14 @@ export class TaskView {
       const key = `chat:${paneId ?? ''}`;
       if (key !== this.contentKey) {
         this.contentKey = key;
-        this.content!.replaceChildren(this.renderAgentSwitcher());
-        if (paneId) this.content!.append(this.host.paneToolbar(paneId), ...chat.mount(paneId));
-        else this.content!.append(h('p', { class: 'muted pad' }, t("Add an agent to this task to start a conversation.")));
+        if (paneId) this.content!.replaceChildren(this.host.paneToolbar(paneId), ...chat.mount(paneId));
+        else this.content!.replaceChildren(this.renderAgentList());
         this.host.send({ type: 'openPane', paneId: paneId || null });
-      } else {
-        this.content!.querySelector('.task-agents')?.replaceWith(this.renderAgentSwitcher());
-        if (paneId) this.content!.querySelector('.toolbar')?.replaceWith(this.host.paneToolbar(paneId));
+      } else if (paneId) {
+        this.content!.querySelector('.toolbar')?.replaceWith(this.host.paneToolbar(paneId));
         chat.refresh();
+      } else {
+        this.content!.querySelector('.task-agent-list')?.replaceWith(this.renderAgentList());
       }
       return;
     }
@@ -311,23 +363,36 @@ export class TaskView {
     else this.renderMemories();
   }
 
-  private renderAgentSwitcher(): HTMLElement {
+  /** tab 的 agent 清單。點一下 agent 才進入對話。 */
+  private renderAgentList(): HTMLElement {
     const { h } = this.host;
     const task = this.task();
     const labels: Record<string, string> = { working: t("Running"), blocked: t("Awaiting action"), idle: t("Idle"), done: t("Native turn ended"), unknown: t("Unknown state"), shell: t("Terminal") };
-    return h('div', { class: 'task-agents', 'aria-label': t("Switch conversation agent") },
-      ...this.tab!.agents.map((agent) => {
-        let role = task?.enabled && task.planner.paneId === agent.paneId ? task.status === 'handoff_pending' ? t("Previous planner · handoff paused") : t("Planner") : '';
-        if (!role && task?.handoffs.some((handoff) => handoff.status === 'accepted' && handoff.from.paneId === agent.paneId)) role = t("Previous planner");
-        const request = task ? [...task.requests].reverse().find((item) => item.target.paneId === agent.paneId) : undefined;
-        const status = request ? requestLabel(request) : labels[agent.status] ?? t("Unknown state");
-        return h('button', {
-          class: 'task-agent', 'data-agent-pane': agent.paneId, 'aria-pressed': String(this.paneId() === agent.paneId),
-          title: `${paneName(agent)} · ${agent.paneId}`, onclick: () => this.host.openAgent(agent.paneId),
-        }, h('span', { class: 'task-agent-name' }, paneName(agent)), h('span', { class: 'task-agent-state' }, [role, status].filter(Boolean).join(' · ')));
-      }),
-      h('button', { class: 'secondary small task-add-agent', onclick: () => this.host.newAgent(this.tab!.tabId) }, t('＋ Add agent')));
+    const agents = this.tab!.agents;
+    return h('div', { class: 'task-agent-list' },
+      agents.length ? h('ul', { class: 'list task-agents', 'aria-label': t("Switch conversation agent") },
+        ...agents.map((agent) => {
+          let role = task?.enabled && task.planner.paneId === agent.paneId ? task.status === 'handoff_pending' ? t("Previous planner · handoff paused") : t("Planner") : '';
+          if (!role && task?.handoffs.some((handoff) => handoff.status === 'accepted' && handoff.from.paneId === agent.paneId)) role = t("Previous planner");
+          const request = task ? [...task.requests].reverse().find((item) => item.target.paneId === agent.paneId) : undefined;
+          const status = request ? requestLabel(request) : labels[agent.status] ?? t("Unknown state");
+          const statusText = labels[agent.status] ?? agent.status;
+          return h('li', { class: 'row-wrap' },
+            h('button', {
+              class: `row task-agent ${agent.focused ? 'active' : ''}`, 'data-agent-pane': agent.paneId,
+              title: `${paneName(agent)} · ${agent.paneId}`, onclick: () => this.host.openAgent(agent.paneId),
+            },
+            h('span', { class: `status status-${agent.status}`, title: statusText, role: 'img', 'aria-label': statusText }),
+            h('span', { class: 'row-text' },
+              h('span', { class: 'row-title task-agent-name' }, paneName(agent)),
+              h('span', { class: 'row-sub task-agent-state' }, [role, status, agent.kind && agent.title ? agent.title : ''].filter(Boolean).join(' · ')))),
+            h('div', { class: 'row-actions' },
+              h('button', { class: 'icon-button', title: t("Rename"), 'aria-label': t("Rename"), onclick: () => this.host.send({ type: 'renamePane', paneId: agent.paneId }) }, this.host.icon('edit')),
+              h('button', { class: 'icon-button', title: t("Close pane"), 'aria-label': t("Close pane"), onclick: () => this.host.send({ type: 'closePane', paneId: agent.paneId }) }, this.host.icon('trash'))));
+        })) : h('p', { class: 'muted pad' }, t("Add an agent to this task to start a conversation.")),
+      h('div', { class: 'pad' }, h('button', { class: 'secondary small task-add-agent', onclick: () => this.host.newAgent(this.tab!.tabId) }, t('＋ Add agent'))));
   }
+
 
   openMemory(paneId: string, message: ChatMessage, messageIndex: number, selectedText?: string): void {
     const tab = this.tab;

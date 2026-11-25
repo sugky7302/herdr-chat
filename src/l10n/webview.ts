@@ -43,6 +43,7 @@ export const webviewMessages: Record<string, string> = {
   "Awaiting planner response": "等待規劃者回應",
   "Awaiting your response": "等待你回應",
   "Back": "返回",
+  "Back to agents": "返回 agent 清單",
   "Building a handoff checkpoint from the task, conversations, and reports…": "正在從現有任務、對話與回報建立交接快照…",
   "Cancel": "取消",
   "Chat": "對話",
