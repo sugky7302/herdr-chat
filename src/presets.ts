@@ -16,6 +16,8 @@ export interface AgentPreset {
   switchEffort?: string;
   /** codex-menu：用 Codex 的 /model 選單切換模型與 effort。 */
   switchStyle?: 'command' | 'codex-menu';
+  /** 額外的 / 指令，用於內建清單沒有的 agent。 */
+  slashCommands?: string[];
 }
 
 const NAME_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;

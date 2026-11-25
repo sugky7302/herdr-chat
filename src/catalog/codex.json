@@ -1,0 +1,234 @@
+[
+ {
+  "name": "/agents",
+  "description": "open the agent command center"
+ },
+ {
+  "name": "/app",
+  "description": "continue this session in the Desktop app"
+ },
+ {
+  "name": "/approve",
+  "description": "approve one retry of a recent auto-"
+ },
+ {
+  "name": "/archive",
+  "description": "archive this session"
+ },
+ {
+  "name": "/cd",
+  "description": "change the current working directory"
+ },
+ {
+  "name": "/clear",
+  "description": "clear the terminal and start a new chat"
+ },
+ {
+  "name": "/compact",
+  "description": "summarize conversation to prevent"
+ },
+ {
+  "name": "/config",
+  "description": "configure Codex preferences"
+ },
+ {
+  "name": "/copy",
+  "description": "copy the last response or part of it"
+ },
+ {
+  "name": "/daemon",
+  "description": "Manage the local background server"
+ },
+ {
+  "name": "/daybreak",
+  "description": "Learn about broader access for"
+ },
+ {
+  "name": "/delete",
+  "description": "permanently delete this session"
+ },
+ {
+  "name": "/diff",
+  "description": "show git diff (including untracked"
+ },
+ {
+  "name": "/exit",
+  "description": "exit Codex"
+ },
+ {
+  "name": "/experimental",
+  "description": "toggle experimental features"
+ },
+ {
+  "name": "/export",
+  "description": "export the conversation as markdown"
+ },
+ {
+  "name": "/fast",
+  "description": "2x speed, increased usage"
+ },
+ {
+  "name": "/feedback",
+  "description": "send logs to maintainers or save a ZIP"
+ },
+ {
+  "name": "/fork",
+  "description": "fork the current chat"
+ },
+ {
+  "name": "/goal",
+  "description": "set or view the goal for a long-running"
+ },
+ {
+  "name": "/hooks",
+  "description": "view and manage lifecycle hooks"
+ },
+ {
+  "name": "/ide",
+  "description": "include current selection, open files,"
+ },
+ {
+  "name": "/import",
+  "description": "import setup, this project, and recent"
+ },
+ {
+  "name": "/init",
+  "description": "create an AGENTS.md file with"
+ },
+ {
+  "name": "/keymap",
+  "description": "remap TUI shortcuts"
+ },
+ {
+  "name": "/logout",
+  "description": "log out of Codex"
+ },
+ {
+  "name": "/mcp",
+  "description": "list MCP tools; /mcp verbose or /mcp"
+ },
+ {
+  "name": "/memories",
+  "description": "configure memory use and generation"
+ },
+ {
+  "name": "/mention",
+  "description": "mention a file"
+ },
+ {
+  "name": "/model",
+  "description": "choose what model and reasoning effort"
+ },
+ {
+  "name": "/new",
+  "description": "start a new chat during a conversation"
+ },
+ {
+  "name": "/permissions",
+  "description": "choose what Codex is allowed to do"
+ },
+ {
+  "name": "/pets",
+  "description": "choose or hide the terminal pet"
+ },
+ {
+  "name": "/plan",
+  "description": "switch to Plan mode"
+ },
+ {
+  "name": "/plugins",
+  "description": "browse plugins"
+ },
+ {
+  "name": "/presets",
+  "description": "run or save reusable prompts and slash"
+ },
+ {
+  "name": "/ps",
+  "description": "list background terminals"
+ },
+ {
+  "name": "/pwd",
+  "description": "show the current working directory"
+ },
+ {
+  "name": "/raw",
+  "description": "toggle raw scrollback mode for copy-"
+ },
+ {
+  "name": "/rc",
+  "description": "manage remote control for the local"
+ },
+ {
+  "name": "/recap",
+  "description": "summarize the current conversation now"
+ },
+ {
+  "name": "/rename",
+  "description": "rename the current thread"
+ },
+ {
+  "name": "/resume",
+  "description": "resume a saved chat"
+ },
+ {
+  "name": "/review",
+  "description": "review my current changes and find"
+ },
+ {
+  "name": "/side",
+  "description": "start a side conversation"
+ },
+ {
+  "name": "/skills",
+  "description": "use skills to improve how Codex performs"
+ },
+ {
+  "name": "/status",
+  "description": "show current session configuration and"
+ },
+ {
+  "name": "/statusline",
+  "description": "configure which items appear in the"
+ },
+ {
+  "name": "/stop",
+  "description": "stop all background terminals"
+ },
+ {
+  "name": "/subagents",
+  "description": "switch between this session's subagents"
+ },
+ {
+  "name": "/theme",
+  "description": "choose a syntax highlighting theme"
+ },
+ {
+  "name": "/title",
+  "description": "configure which items appear in the"
+ },
+ {
+  "name": "/tui",
+  "description": "choose the TUI mode for the next launch"
+ },
+ {
+  "name": "/usage",
+  "description": "view account usage or use a usage limit"
+ },
+ {
+  "name": "/vim",
+  "description": "toggle Vim mode for the composer"
+ },
+ {
+  "name": "/voice",
+  "description": "start or stop voice; use /voice settings"
+ },
+ {
+  "name": "/warnings",
+  "description": "view retained warnings and diagnostic"
+ },
+ {
+  "name": "/worktree",
+  "description": "start or continue a conversation in a"
+ }
+]

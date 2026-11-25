@@ -22,6 +22,8 @@ export interface WorktreeView {
 
 export interface AgentView {
   paneId: string;
+  /** pane 標籤（使用者自訂名稱）。 */
+  label: string | null;
   name: string | null;
   kind: string | null;
   presetId: string | null;
@@ -62,12 +64,43 @@ export interface ChatMessage {
   tool?: string;
 }
 
+export interface Usage {
+  /** 目前上下文使用的 token 數（最後一次請求）。 */
+  contextTokens?: number;
+  /** 模型的上下文上限。紀錄中沒有時為 undefined。 */
+  contextWindow?: number;
+  /** 整段對話累計的 token 數（輸入含快取 + 輸出）。 */
+  totalTokens?: number;
+  outputTokens?: number;
+  /** 方案額度已使用的百分比（Codex 才有）。 */
+  rateLimitPercent?: number;
+  rateLimitWindowMinutes?: number;
+}
+
+export interface CompletionItem {
+  label: string;
+  insert: string;
+  description?: string;
+  kind: 'command' | 'file';
+}
+
+export interface QueuedView {
+  id: number;
+  text: string;
+  attachments: string[];
+}
+
 export interface Transcript {
   paneId: string;
   source: 'claude' | 'codex' | 'terminal';
   messages: ChatMessage[];
   model?: string;
   effort?: string;
+  usage?: Usage;
+  /** 等待送出的訊息（agent 工作中時排隊）。 */
+  queue?: QueuedView[];
+  /** agent 跳出的確認畫面中的選項。 */
+  dialog?: { number: number; text: string; highlighted: boolean }[];
   /** 終端機目前的畫面。agent 等待回應或使用者開啟終端機檢視時才有。 */
   screen?: string;
 }
@@ -77,6 +110,8 @@ export type ToWebview =
   | { type: 'transcript'; transcript: Transcript }
   | { type: 'navigate'; view: 'history' | 'newAgent' }
   | { type: 'openedPane'; paneId: string }
+  | { type: 'completions'; requestId: number; items: CompletionItem[] }
+  | { type: 'attachments'; paneId: string; paths: string[] }
   | { type: 'busy'; busy: boolean; text?: string }
   | { type: 'error'; text: string };
 
@@ -88,7 +123,28 @@ export type FromWebview =
   | { type: 'focusPaneInHerdr'; paneId: string }
   | { type: 'newTab' }
   | { type: 'newAgent'; presetId: string; tabId: string | null; model?: string; effort?: string; saveAsDefault?: boolean }
-  | { type: 'send'; paneId: string; text: string; model?: string; effort?: string }
+  | {
+      type: 'send';
+      paneId: string;
+      text: string;
+      model?: string;
+      effort?: string;
+      attachments?: string[];
+      /** now：agent 工作中也立刻插入；queue（預設）：工作中先排隊。 */
+      mode?: 'queue' | 'now';
+    }
+  | { type: 'removeQueued'; paneId: string; id: number }
+  | { type: 'insertQueued'; paneId: string; id: number }
+  | { type: 'chooseOption'; paneId: string; number: number }
+  | { type: 'renameTab'; tabId: string }
+  | { type: 'closeTab'; tabId: string }
+  | { type: 'renamePane'; paneId: string }
+  | { type: 'closePane'; paneId: string }
+  | { type: 'complete'; requestId: number; paneId: string; trigger: '/' | '@'; query: string }
+  | { type: 'pickFiles'; paneId: string }
+  | { type: 'dropUris'; paneId: string; uris: string[] }
+  | { type: 'dropFiles'; paneId: string; files: { name: string; base64: string }[] }
+  | { type: 'refreshCommands'; paneId: string }
   | { type: 'interrupt'; paneId: string }
   | { type: 'keys'; paneId: string; keys: string[] }
   | { type: 'showScreen'; paneId: string; show: boolean }

@@ -22,7 +22,7 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
   private view: vscode.WebviewView | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.controller = new Controller(context.workspaceState, (message) => this.post(message));
+    this.controller = new Controller(context.workspaceState, (message) => this.post(message), context.globalState);
   }
 
   dispose(): void {
@@ -75,8 +75,65 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
           break;
         }
         case 'send':
-          await c.send(message.paneId, message.text, message.model, message.effort);
+          await c.send(message.paneId, message.text, {
+            model: message.model,
+            effort: message.effort,
+            attachments: message.attachments,
+            mode: message.mode,
+          });
           break;
+        case 'removeQueued':
+          c.removeQueued(message.paneId, message.id);
+          break;
+        case 'insertQueued':
+          await c.insertQueued(message.paneId, message.id);
+          break;
+        case 'chooseOption':
+          await c.chooseOption(message.paneId, message.number);
+          break;
+        case 'renameTab':
+          await c.renameTab(message.tabId);
+          break;
+        case 'closeTab':
+          await c.closeTab(message.tabId);
+          break;
+        case 'renamePane':
+          await c.renamePane(message.paneId);
+          break;
+        case 'closePane':
+          await c.closePane(message.paneId);
+          break;
+        case 'complete':
+          this.post({
+            type: 'completions',
+            requestId: message.requestId,
+            items: await c.complete(message.paneId, message.trigger, message.query),
+          });
+          break;
+        case 'pickFiles':
+          this.post({ type: 'attachments', paneId: message.paneId, paths: await c.pickFiles() });
+          break;
+        case 'dropUris': {
+          const paths = message.uris
+            .map((value) => {
+              try {
+                return vscode.Uri.parse(value.trim()).fsPath;
+              } catch {
+                return '';
+              }
+            })
+            .filter(Boolean);
+          this.post({ type: 'attachments', paneId: message.paneId, paths });
+          break;
+        }
+        case 'dropFiles':
+          this.post({ type: 'attachments', paneId: message.paneId, paths: await c.saveDroppedFiles(message.files) });
+          break;
+        case 'refreshCommands': {
+          const count = await this.busy('從 agent 讀取指令清單…', () => c.refreshCommands(message.paneId));
+          void vscode.window.showInformationMessage(`已更新 ${count} 個 / 指令。`);
+          break;
+        }
         case 'keys':
           await c.sendKeys(message.paneId, message.keys);
           break;

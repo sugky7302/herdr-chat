@@ -10,12 +10,21 @@
 
 ## 對話頁
 
-- Claude 與 Codex 讀取各自的原生對話紀錄（`~/.claude/projects`、`~/.codex/sessions`），顯示成對話泡泡。
-- 其他 agent 顯示終端機文字。
-- agent 等待回應（例如權限確認）時，會顯示終端機畫面與按鍵按鈕。
-- 模型與 effort 選單在下一則訊息送出前生效：
-  - Claude：送出 `/model <模型>` 與 `/effort <effort>`。
-  - Codex：操作 `/model` 選單，最後按 `s`，只套用到目前 session，不會改 `~/.codex/config.toml`。
+- 樣式模仿 Copilot Chat：每則訊息上方顯示「你」或 agent 名稱，工具呼叫顯示成一行摘要。
+- Claude 與 Codex 讀取各自的原生對話紀錄（`~/.claude/projects`、`~/.codex/sessions`）。其他 agent 顯示終端機文字。
+- 往上捲動後，右下角出現「捲到最新訊息」按鈕。
+- 輸入框：
+  - 📎 附加檔案；也可以拖曳檔案或貼上圖片。從 VS Code 檔案總管拖曳時請按住 Shift。
+  - `@` 搜尋專案檔案；`/` 列出該 agent 的指令（含 skill 與自訂指令）。清單不完整時，點「從 agent 更新清單」。
+  - 模型與 effort 選單在下一則訊息送出前生效：Claude 送出 `/model`、`/effort`；Codex 操作 `/model` 選單並按 `s`，只套用到目前 session。
+  - 右側顯示上下文用量。滑過可看累計 token 與方案額度（Codex 才有上下文上限與額度）。
+- agent 工作中：Enter 把訊息加入佇列，完成後依序送出；⌘/Ctrl+Enter 或 ⚡ 立即插入目前的回合；Esc 中斷。
+- agent 跳出確認畫面時，選項顯示成按鈕，點選即可回應。
+
+## tab 與 pane
+
+- 歷史紀錄與 tab 頁的每一列，滑過時出現「重新命名」與「關閉」按鈕。
+- 「＋ pane」可以新增 agent 或空白終端機。
 
 ## 設定
 

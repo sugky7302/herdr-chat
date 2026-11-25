@@ -13,7 +13,7 @@ export interface MenuOption {
   highlighted: boolean;
 }
 
-const OPTION_LINE = /^\s*(›|>)?\s*(\d+)\.\s+(.+?)(?:\s{2,}.*)?$/;
+const OPTION_LINE = /^[\s│|]*(›|>|❯)?\s*(\d+)\.\s+(.+?)(?:\s{2,}.*)?[\s│|]*$/;
 
 export function normalizeLabel(label: string): string {
   return label
@@ -63,4 +63,77 @@ export function nextKey(options: MenuOption[], target: string): 'up' | 'down' | 
   const wanted = options.find((option) => option.name === target);
   if (!wanted) return 'down';
   return wanted.number > current.number ? 'down' : 'up';
+}
+
+export interface DialogOption {
+  number: number;
+  /** 畫面上的原始文字。 */
+  text: string;
+  highlighted: boolean;
+}
+
+/**
+ * 從 agent 的確認畫面取出選項，例如「❯ 1. Yes」「2. No」。
+ * 只取畫面最後一組連續編號的選項，避免誤抓對話內容中的編號清單。
+ */
+export function parseDialog(screen: string): DialogOption[] {
+  const lines = screen.split('\n');
+  const groups: DialogOption[][] = [];
+  let current: DialogOption[] = [];
+  for (const line of lines) {
+    const match = OPTION_LINE.exec(line);
+    if (match) {
+      const number = Number(match[2]);
+      if (current.length && number !== current[current.length - 1].number + 1) {
+        groups.push(current);
+        current = [];
+      }
+      current.push({ number, text: match[3].trim(), highlighted: Boolean(match[1]) });
+    } else if (current.length && !line.trim()) {
+      continue;
+    } else if (current.length && /^\s{4,}\S/.test(line)) {
+      // 選項說明的換行，屬於同一組。
+      continue;
+    } else if (current.length) {
+      groups.push(current);
+      current = [];
+    }
+  }
+  if (current.length) groups.push(current);
+  const withCursor = groups.filter((group) => group.some((option) => option.highlighted));
+  const last = withCursor[withCursor.length - 1];
+  if (last && last.length >= 2) return last;
+  return parseUnnumbered(lines);
+}
+
+/**
+ * 沒有編號的選項，例如 Claude 的信任畫面：
+ *   ❯ No, exit
+ *     Yes, I trust this folder
+ * 以游標所在行為準，往上下收集縮排相同的相鄰行。
+ */
+function parseUnnumbered(lines: string[]): DialogOption[] {
+  const strip = (line: string) => line.replace(/^[\s│|]*/, '').replace(/[\s│|]*$/, '');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const match = /^([\s│|]*)(❯|›)\s+(\S.*?)[\s│|]*$/.exec(lines[i]);
+    if (!match || /^\d+\./.test(match[3])) continue;
+    const column = match[1].length;
+    const textColumn = lines[i].indexOf(match[3]);
+    const sameColumn = (line: string) => {
+      const text = strip(line);
+      return text !== '' && line.indexOf(text) === textColumn && !/^(❯|›)/.test(text);
+    };
+    let start = i;
+    while (start > 0 && sameColumn(lines[start - 1])) start--;
+    let end = i;
+    while (end < lines.length - 1 && sameColumn(lines[end + 1])) end++;
+    if (end === start) return [];
+    const options: DialogOption[] = [];
+    for (let k = start; k <= end; k++) {
+      options.push({ number: options.length + 1, text: k === i ? match[3].trim() : strip(lines[k]), highlighted: k === i });
+    }
+    void column;
+    return options;
+  }
+  return [];
 }

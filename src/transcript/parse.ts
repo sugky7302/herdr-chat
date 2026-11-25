@@ -1,12 +1,13 @@
 // 把 Claude Code 與 Codex 的原生對話紀錄（JSONL）轉成對話泡泡。
 // 這個檔案只做純文字轉換，不讀檔，方便測試。
 
-import type { ChatMessage } from '../shared';
+import type { ChatMessage, Usage } from '../shared';
 
 export interface ParsedTranscript {
   messages: ChatMessage[];
   model?: string;
   effort?: string;
+  usage?: Usage;
 }
 
 const MAX_MESSAGES = 300;
@@ -58,8 +59,8 @@ function pushMessage(messages: ChatMessage[], message: ChatMessage): void {
   messages.push(message);
 }
 
-function finish(messages: ChatMessage[], model?: string, effort?: string): ParsedTranscript {
-  return { messages: messages.slice(-MAX_MESSAGES), model, effort };
+function finish(messages: ChatMessage[], model?: string, effort?: string, usage?: Usage): ParsedTranscript {
+  return { messages: messages.slice(-MAX_MESSAGES), model, effort, usage };
 }
 
 /** 判斷使用者訊息是不是系統自動加入的內容，而不是使用者輸入的文字。 */
@@ -89,6 +90,9 @@ export function parseClaude(text: string): ParsedTranscript {
   const messages: ChatMessage[] = [];
   let model: string | undefined;
   let effort: string | undefined;
+  // Claude Code 會把同一則回覆拆成多行，每行帶相同的 usage，所以依訊息 id 只算一次。
+  const usageById = new Map<string, any>();
+  let lastUsage: any;
   eachJson(text, (entry) => {
     if (entry.isSidechain) return;
     const message = entry.message;
@@ -117,6 +121,10 @@ export function parseClaude(text: string): ParsedTranscript {
     }
     if (entry.type === 'assistant' && message) {
       if (typeof message.model === 'string' && message.model !== '<synthetic>') model = message.model;
+      if (message.usage && typeof message.usage === 'object') {
+        usageById.set(String(message.id ?? entry.uuid ?? usageById.size), message.usage);
+        lastUsage = message.usage;
+      }
       const content = Array.isArray(message.content) ? message.content : [];
       for (const part of content) {
         if (part?.type === 'text' && typeof part.text === 'string') {
@@ -127,7 +135,17 @@ export function parseClaude(text: string): ParsedTranscript {
       }
     }
   });
-  return finish(messages, model, effort);
+  let usage: Usage | undefined;
+  if (lastUsage) {
+    const sum = (u: any) =>
+      (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.output_tokens ?? 0);
+    usage = {
+      contextTokens: sum(lastUsage),
+      totalTokens: [...usageById.values()].reduce((total, u) => total + sum(u), 0),
+      outputTokens: [...usageById.values()].reduce((total, u) => total + (u.output_tokens ?? 0), 0),
+    };
+  }
+  return finish(messages, model, effort, usage);
 }
 
 function codexText(content: unknown): string {
@@ -142,8 +160,22 @@ export function parseCodex(text: string): ParsedTranscript {
   const messages: ChatMessage[] = [];
   let model: string | undefined;
   let effort: string | undefined;
+  let usage: Usage | undefined;
   eachJson(text, (entry) => {
     const payload = entry.payload ?? {};
+    if (entry.type === 'event_msg' && payload.type === 'token_count') {
+      const info = payload.info;
+      const primary = payload.rate_limits?.primary;
+      usage = {
+        contextTokens: info?.last_token_usage?.total_tokens ?? usage?.contextTokens,
+        contextWindow: info?.model_context_window ?? usage?.contextWindow,
+        totalTokens: info?.total_token_usage?.total_tokens ?? usage?.totalTokens,
+        outputTokens: info?.total_token_usage?.output_tokens ?? usage?.outputTokens,
+        rateLimitPercent: typeof primary?.used_percent === 'number' ? primary.used_percent : usage?.rateLimitPercent,
+        rateLimitWindowMinutes: primary?.window_minutes ?? usage?.rateLimitWindowMinutes,
+      };
+      return;
+    }
     if (entry.type === 'turn_context') {
       if (typeof payload.model === 'string') model = payload.model;
       const nextEffort = payload.effort ?? payload.collaboration_mode?.settings?.reasoning_effort;
@@ -165,7 +197,7 @@ export function parseCodex(text: string): ParsedTranscript {
       pushMessage(messages, { role: 'tool', tool: String(payload.name ?? 'shell'), text: summarizeToolInput(input) });
     }
   });
-  return finish(messages, model, effort);
+  return finish(messages, model, effort, usage);
 }
 
 /** Claude Code 把專案路徑中非英數字元換成 - 當作資料夾名稱。 */

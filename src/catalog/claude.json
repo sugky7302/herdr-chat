@@ -1,0 +1,898 @@
+[
+ {
+  "name": "/add-dir",
+  "description": "Add a working directory"
+ },
+ {
+  "name": "/advisor",
+  "description": "Let Claude consult a stronger model at key moments"
+ },
+ {
+  "name": "/agy:ask",
+  "description": "(agy) Ask Google's Antigravity CLI (agy staffer, fast Gemini) a"
+ },
+ {
+  "name": "/agy:implementer",
+  "description": "(agy) Delegate a coding task to Google's Antigravity CLI (agy"
+ },
+ {
+  "name": "/agy:lead",
+  "description": "(agy) Orchestrate an ongoing task with AGY while the current agent"
+ },
+ {
+  "name": "/agy:researcher",
+  "description": "(agy) Delegate a deep research or survey task to Google's"
+ },
+ {
+  "name": "/agy:reviewer",
+  "description": "(agy) Get a second-opinion review from Google's Antigravity CLI"
+ },
+ {
+  "name": "/agy:staffer",
+  "description": "(agy) Delegate a general-purpose task to Google's Antigravity CLI"
+ },
+ {
+  "name": "/anthropic-skills:computer-use",
+  "description": "Read this skill before the first step of any request to do"
+ },
+ {
+  "name": "/anthropic-skills:skill-creator",
+  "description": "Create new skills, modify and improve existing skills, and measure"
+ },
+ {
+  "name": "/artifact-capabilities",
+  "description": "Runtime capabilities for published Artifacts"
+ },
+ {
+  "name": "/artifact-diagramming",
+  "description": "Diagramming guidance for Artifacts"
+ },
+ {
+  "name": "/artifacts",
+  "description": "Browse your published and shared artifacts"
+ },
+ {
+  "name": "/ask-matt",
+  "description": "Ask which skill or flow fits your situation. A router over the"
+ },
+ {
+  "name": "/auto-mode-setup",
+  "description": "Teach auto mode about your environment"
+ },
+ {
+  "name": "/autocompact",
+  "description": "Set how full the context gets before auto-summarizing"
+ },
+ {
+  "name": "/autofix-pr",
+  "description": "Monitor and autofix any issues with the current PR"
+ },
+ {
+  "name": "/background",
+  "description": "Send this session to the background and free the terminal"
+ },
+ {
+  "name": "/banner-design",
+  "description": "Design banners for social media, ads, website heroes, creative"
+ },
+ {
+  "name": "/batch",
+  "description": "Plan a large change; background agents each open a PR"
+ },
+ {
+  "name": "/branch",
+  "description": "Create a branch of the current conversation at this point"
+ },
+ {
+  "name": "/brand",
+  "description": "Brand voice, visual identity, messaging frameworks, asset"
+ },
+ {
+  "name": "/btw",
+  "description": "Ask a side question without interrupting Claude"
+ },
+ {
+  "name": "/bug",
+  "description": "Report a bug or share your session"
+ },
+ {
+  "name": "/built-in-browser",
+  "description": "Read this skill before the first step that uses the built-in"
+ },
+ {
+  "name": "/captions-overlay",
+  "description": "Overlay doctrine for the embedded-captions workflow — the caption"
+ },
+ {
+  "name": "/cd",
+  "description": "Move this session to a new working directory"
+ },
+ {
+  "name": "/changelog-video",
+  "description": "Turn a weekly changelog .md into a finished branded changelog"
+ },
+ {
+  "name": "/chrome",
+  "description": "Open Claude in Chrome settings"
+ },
+ {
+  "name": "/chrome-browser",
+  "description": "Read this skill before the first step that uses Claude in Chrome,"
+ },
+ {
+  "name": "/claude-api",
+  "description": "Build and debug apps that use the Claude API"
+ },
+ {
+  "name": "/claude-approvals",
+  "description": "Edit, explain, or tune a Claude Approvals policy file or"
+ },
+ {
+  "name": "/claude-in-chrome",
+  "description": "Let Claude browse and interact with pages in your Chrome"
+ },
+ {
+  "name": "/claude-mem:agent-cost-report",
+  "description": "(claude-mem) Believable agent cost report for any period, default"
+ },
+ {
+  "name": "/claude-mem:babysit",
+  "description": "(claude-mem) Watch a pull request or review cycle until it is"
+ },
+ {
+  "name": "/claude-mem:backup-setup",
+  "description": "(claude-mem) Set up, check, or restore local claude-mem database"
+ },
+ {
+  "name": "/claude-mem:build",
+  "description": "(claude-mem) Fully automate a coding task with make-plan, do, and"
+ },
+ {
+  "name": "/claude-mem:build-and-release",
+  "description": "(claude-mem) Fully automate building and releasing a coding task."
+ },
+ {
+  "name": "/claude-mem:ccs-align",
+  "description": "(claude-mem) Run the CCS Align seat's hourly breathing cycle —"
+ },
+ {
+  "name": "/claude-mem:childhood",
+  "description": "(claude-mem) Babysit a shipped release after merge, publication,"
+ },
+ {
+  "name": "/claude-mem:cloud-sync",
+  "description": "(claude-mem) Set up or check claude-mem cloud sync with cmem.ai"
+ },
+ {
+  "name": "/claude-mem:design-is",
+  "description": "(claude-mem) Audit a design against Dieter Rams' ten \"Good design"
+ },
+ {
+  "name": "/claude-mem:do",
+  "description": "(claude-mem) Execute a phased implementation plan using subagents."
+ },
+ {
+  "name": "/claude-mem:handoff",
+  "description": "(claude-mem) Generate a HANDOFF.md that captures goal, current"
+ },
+ {
+  "name": "/claude-mem:how-it-works",
+  "description": "(claude-mem) Explain how claude-mem captures observations, when"
+ },
+ {
+  "name": "/claude-mem:knowledge-agent",
+  "description": "(claude-mem) Build and query AI-powered knowledge bases from"
+ },
+ {
+  "name": "/claude-mem:learn-codebase",
+  "description": "(claude-mem) Prime a codebase by reading every source file in"
+ },
+ {
+  "name": "/claude-mem:make-plan",
+  "description": "(claude-mem) Create a detailed, phased implementation plan with"
+ },
+ {
+  "name": "/claude-mem:mem-search",
+  "description": "(claude-mem) Smart search (default). Search claude-mem's"
+ },
+ {
+  "name": "/claude-mem:mode-creator",
+  "description": "(claude-mem) Interactively create, install, activate, and verify"
+ },
+ {
+  "name": "/claude-mem:oh-my-issues",
+  "description": "(claude-mem) Cluster a GitHub issue backlog by root cause into a"
+ },
+ {
+  "name": "/claude-mem:owner-goals",
+  "description": "(claude-mem) Map what the owner wants from the prompts they typed"
+ },
+ {
+  "name": "/claude-mem:pathfinder",
+  "description": "(claude-mem) Map a codebase into feature-grouped flowcharts,"
+ },
+ {
+  "name": "/claude-mem:release",
+  "description": "(claude-mem) Fully automate a release with version-bump and"
+ },
+ {
+  "name": "/claude-mem:request-progress",
+  "description": "(claude-mem) Group recent conversations into overall requests,"
+ },
+ {
+  "name": "/claude-mem:screenpipe",
+  "description": "(claude-mem) Search screen and audio history recorded by"
+ },
+ {
+  "name": "/claude-mem:smart-explore",
+  "description": "(claude-mem) Token-optimized structural code search using"
+ },
+ {
+  "name": "/claude-mem:standup",
+  "description": "(claude-mem) Facilitate a read-only standup across git worktrees,"
+ },
+ {
+  "name": "/claude-mem:timeline-report",
+  "description": "(claude-mem) Generate a \"Journey Into [Project]\" narrative report"
+ },
+ {
+  "name": "/claude-mem:version-bump",
+  "description": "(claude-mem) Maintainer release workflow for the"
+ },
+ {
+  "name": "/claude-mem:weekly-digests",
+  "description": "(claude-mem) Generate a serial week-by-week narrative digest of a"
+ },
+ {
+  "name": "/claude-mem:what-the",
+  "description": "(claude-mem) What the? Use when the user wants a plain-English"
+ },
+ {
+  "name": "/claude-mem:wowerpoint",
+  "description": "(claude-mem) Turn one document into a kawaii NotebookLM slide"
+ },
+ {
+  "name": "/clear",
+  "description": "Start a new session with empty context; loops carry over, and the"
+ },
+ {
+  "name": "/cli-anything:cli-anything",
+  "description": "(cli-anything) cli-anything Command"
+ },
+ {
+  "name": "/cli-anything:list",
+  "description": "(cli-anything) cli-anything:list Command"
+ },
+ {
+  "name": "/cli-anything:refine",
+  "description": "(cli-anything) cli-anything:refine Command"
+ },
+ {
+  "name": "/cli-anything:test",
+  "description": "(cli-anything) cli-anything:test Command"
+ },
+ {
+  "name": "/cli-anything:validate",
+  "description": "(cli-anything) cli-anything:validate Command"
+ },
+ {
+  "name": "/code-review",
+  "description": "3 free /ultrareview · Review the changes since a fixed point"
+ },
+ {
+  "name": "/codebase-design",
+  "description": "Shared vocabulary for designing deep modules. Use when the user"
+ },
+ {
+  "name": "/color",
+  "description": "Set the prompt bar color for this session"
+ },
+ {
+  "name": "/compact",
+  "description": "Free up context by summarizing the conversation so far"
+ },
+ {
+  "name": "/config",
+  "description": "Open settings"
+ },
+ {
+  "name": "/context",
+  "description": "Show what fills the context"
+ },
+ {
+  "name": "/conventional-branch",
+  "description": "Create Git branches following the Conventional Branch"
+ },
+ {
+  "name": "/copy",
+  "description": "Copy the last response to clipboard (/copy 2 for the one before)"
+ },
+ {
+  "name": "/cut-the-curve",
+  "description": "The technique catalog: five velocity-matched SEAMS (zoom-through,"
+ },
+ {
+  "name": "/dataviz",
+  "description": "Chart and dashboard design guidance"
+ },
+ {
+  "name": "/debug",
+  "description": "Turn on debug logging and investigate problems"
+ },
+ {
+  "name": "/deep-research",
+  "description": "Use this skill when the user's prompt requires (1) researching a"
+ },
+ {
+  "name": "/design",
+  "description": "Comprehensive design skill: brand identity, design tokens, UI"
+ },
+ {
+  "name": "/design-login",
+  "description": "Authorize design-system access for /design-sync with your"
+ },
+ {
+  "name": "/design-sync",
+  "description": "Sync your design system to Claude Design"
+ },
+ {
+  "name": "/design-system",
+  "description": "Token architecture, component specifications, and slide"
+ },
+ {
+  "name": "/desktop",
+  "description": "Continue the current session in Claude Desktop"
+ },
+ {
+  "name": "/diagnosing-bugs",
+  "description": "Diagnosis loop for hard bugs and performance regressions. Use when"
+ },
+ {
+  "name": "/diff",
+  "description": "Toggle the diff panel showing uncommitted changes"
+ },
+ {
+  "name": "/docs",
+  "description": "docs (editable docs people share and comment on; the default for"
+ },
+ {
+  "name": "/doctor",
+  "description": "Health-check your setup and fix issues: installation, unused"
+ },
+ {
+  "name": "/docx",
+  "description": "Use this skill whenever the user wants to create, read, edit, or"
+ },
+ {
+  "name": "/domain-modeling",
+  "description": "Build and sharpen a project's domain model. Use when the user"
+ },
+ {
+  "name": "/effort",
+  "description": "Set the model's effort level"
+ },
+ {
+  "name": "/embedded-captions",
+  "description": "Add captions or subtitles to an existing single-subject"
+ },
+ {
+  "name": "/exit",
+  "description": "Exit the CLI"
+ },
+ {
+  "name": "/export",
+  "description": "Export this session to a file or clipboard"
+ },
+ {
+  "name": "/faceless-explainer",
+  "description": "Turn arbitrary text — an article, notes, a topic, a brief — into a"
+ },
+ {
+  "name": "/fast",
+  "description": "Toggle fast mode (Opus 5.5)"
+ },
+ {
+  "name": "/feedback",
+  "description": "Send feedback to Anthropic or report a bug"
+ },
+ {
+  "name": "/fewer-permission-prompts",
+  "description": "Pre-approve safe read-only commands based on your usage"
+ },
+ {
+  "name": "/figma",
+  "description": "Import Figma content into a HyperFrames composition — rendered"
+ },
+ {
+  "name": "/find-skills",
+  "description": "Helps users discover and install agent skills when they ask"
+ },
+ {
+  "name": "/focus",
+  "description": "Toggle focus view: just your prompt, summary, and response"
+ },
+ {
+  "name": "/fork",
+  "description": "Copy this conversation into a new background session and keep"
+ },
+ {
+  "name": "/frontend-design:frontend-design",
+  "description": "(frontend-design) Guidance for distinctive, intentional visual"
+ },
+ {
+  "name": "/general-video",
+  "description": "Author or edit a custom HyperFrames composition when no"
+ },
+ {
+  "name": "/goal",
+  "description": "Set a goal Claude checks before stopping"
+ },
+ {
+  "name": "/google-workspace",
+  "description": "Read this before the first Google Drive, Docs, Sheets or Slides"
+ },
+ {
+  "name": "/grill-me",
+  "description": "A relentless interview to sharpen a plan or design. (user)"
+ },
+ {
+  "name": "/grill-with-docs",
+  "description": "A relentless interview to sharpen a plan or design, which also"
+ },
+ {
+  "name": "/grilling",
+  "description": "Grill the user relentlessly about a plan, decision, or idea. Use"
+ },
+ {
+  "name": "/handoff",
+  "description": "Compact the current conversation into a handoff document for"
+ },
+ {
+  "name": "/help",
+  "description": "Show help and available commands"
+ },
+ {
+  "name": "/hooks",
+  "description": "View hook configurations for tool events"
+ },
+ {
+  "name": "/hyperframes",
+  "description": "Mandatory entry point: read this first for any request to make,"
+ },
+ {
+  "name": "/hyperframes-animation",
+  "description": "All animation knowledge for HyperFrames — atomic motion rules,"
+ },
+ {
+  "name": "/hyperframes-audio",
+  "description": "Use when audio already placed in a HyperFrames composition needs"
+ },
+ {
+  "name": "/hyperframes-cli",
+  "description": "Use the HyperFrames CLI development loop: init, add, catalog,"
+ },
+ {
+  "name": "/hyperframes-core",
+  "description": "The HyperFrames composition contract — build one renderable"
+ },
+ {
+  "name": "/hyperframes-creative",
+  "description": "Non-animation creative direction for HyperFrames videos. Use for"
+ },
+ {
+  "name": "/hyperframes-keyframes",
+  "description": "Use when a HyperFrames composition needs a punch-in, punch-out,"
+ },
+ {
+  "name": "/hyperframes-registry",
+  "description": "Install, discover, and wire registry blocks and components into"
+ },
+ {
+  "name": "/ide",
+  "description": "Manage IDE integrations and show status"
+ },
+ {
+  "name": "/implement",
+  "description": "Implement a piece of work based on a spec or set of tickets."
+ },
+ {
+  "name": "/import",
+  "description": "Import config from another AI coding agent"
+ },
+ {
+  "name": "/import-memory",
+  "description": "Import a memory export from another AI assistant into Claude's"
+ },
+ {
+  "name": "/improve-codebase-architecture",
+  "description": "Scan a codebase for deepening opportunities, present them as a"
+ },
+ {
+  "name": "/init",
+  "description": "Initialize a new CLAUDE.md file with codebase documentation"
+ },
+ {
+  "name": "/insights",
+  "description": "Generate a report analyzing your Claude Code sessions"
+ },
+ {
+  "name": "/install-github-app",
+  "description": "Set up Claude GitHub Actions for a repository"
+ },
+ {
+  "name": "/install-slack-app",
+  "description": "Install the Claude Slack app"
+ },
+ {
+  "name": "/keybindings",
+  "description": "Open your keyboard shortcuts file"
+ },
+ {
+  "name": "/list-agents",
+  "description": "List subagents, teammates, and other Claude sessions you can"
+ },
+ {
+  "name": "/login",
+  "description": "Sign in with your Anthropic account"
+ },
+ {
+  "name": "/logout",
+  "description": "Sign out from your Anthropic account"
+ },
+ {
+  "name": "/loop",
+  "description": "Repeat a prompt or command on an interval (e.g. /loop 5m /foo)"
+ },
+ {
+  "name": "/mcp",
+  "description": "Manage MCP servers"
+ },
+ {
+  "name": "/media-use",
+  "description": "Agent Media OS, the single skill for every media need in a"
+ },
+ {
+  "name": "/memory",
+  "description": "Edit CLAUDE.md files and memory settings"
+ },
+ {
+  "name": "/mobile",
+  "description": "Show QR code to download the Claude mobile app"
+ },
+ {
+  "name": "/model",
+  "description": "Switch model (currently Sonnet 5.5)"
+ },
+ {
+  "name": "/modern-web-guidance",
+  "description": "Search tool for modern web development best practices. MANDATORY:"
+ },
+ {
+  "name": "/morning",
+  "description": "Render the user's morning brief as a styled HTML artifact, or set"
+ },
+ {
+  "name": "/motion-doctrine",
+  "description": "GATEWAY — load FIRST before composing any HyperFrames animation or"
+ },
+ {
+  "name": "/motion-graphics",
+  "description": "A short, design-led motion graphic where motion is the message —"
+ },
+ {
+  "name": "/music-to-video",
+  "description": "Turn a music track (an audio file, a video to pull audio from, or"
+ },
+ {
+  "name": "/output-style",
+  "description": "List output styles or switch to one"
+ },
+ {
+  "name": "/oversized-cursor",
+  "description": "House-style oversized macOS cursor technique for HyperFrames"
+ },
+ {
+  "name": "/passes",
+  "description": "Share a free week of Claude Code with friends and earn usage"
+ },
+ {
+  "name": "/pdf",
+  "description": "Use this skill whenever the user wants to do anything with PDF"
+ },
+ {
+  "name": "/pensieve",
+  "description": "项目知识库和工作流路由器。 knowledge/"
+ },
+ {
+  "name": "/permissions",
+  "description": "Manage allow and deny tool permission rules"
+ },
+ {
+  "name": "/plan",
+  "description": "Turn on plan mode or view the plan"
+ },
+ {
+  "name": "/plugin",
+  "description": "Manage Claude Code plugins"
+ },
+ {
+  "name": "/plugin-authoring",
+  "description": "Write a mod: a live pane, view or behaviour change in Claude Code"
+ },
+ {
+  "name": "/powerup",
+  "description": "Learn Claude Code features in short lessons"
+ },
+ {
+  "name": "/pptx",
+  "description": "Use this skill any time a .pptx or .potx file is involved in any"
+ },
+ {
+  "name": "/pr-to-video",
+  "description": "Turn a GitHub pull request (a PR URL, owner/repo#N, or 'this PR'"
+ },
+ {
+  "name": "/privacy-settings",
+  "description": "View and update your privacy settings"
+ },
+ {
+  "name": "/product-launch-video",
+  "description": "Turn a product or marketing URL, pasted script, or brief into a"
+ },
+ {
+  "name": "/prototype",
+  "description": "Build a throwaway prototype to answer a design question. Use when"
+ },
+ {
+  "name": "/radio",
+  "description": "Listen to Claude FM lo-fi radio"
+ },
+ {
+  "name": "/rate-limit-options",
+  "description": "Manage usage limits and upgrade options"
+ },
+ {
+  "name": "/recap",
+  "description": "Generate a one-line session recap now"
+ },
+ {
+  "name": "/release-notes",
+  "description": "View release notes"
+ },
+ {
+  "name": "/reload-plugins",
+  "description": "Activate pending plugin changes in the current session"
+ },
+ {
+  "name": "/reload-skills",
+  "description": "Pick up skills added or changed on disk during this session"
+ },
+ {
+  "name": "/remote-control",
+  "description": "Control this session from your phone or claude.ai/code"
+ },
+ {
+  "name": "/remote-env",
+  "description": "Choose the default environment for cloud agents"
+ },
+ {
+  "name": "/remotion-to-hyperframes",
+  "description": "Port an existing Remotion (React) composition's source to"
+ },
+ {
+  "name": "/rename",
+  "description": "Rename the current conversation"
+ },
+ {
+  "name": "/research",
+  "description": "Investigate a question against high-trust primary sources and"
+ },
+ {
+  "name": "/resolving-merge-conflicts",
+  "description": "Use when you need to resolve an in-progress git merge/rebase"
+ },
+ {
+  "name": "/restart",
+  "description": "Restart Claude Code and keep this session"
+ },
+ {
+  "name": "/resume",
+  "description": "Resume a previous session"
+ },
+ {
+  "name": "/rewind",
+  "description": "Restore earlier code, conversation, or both"
+ },
+ {
+  "name": "/run",
+  "description": "Launch this project’s app to see your change working"
+ },
+ {
+  "name": "/run-skill-generator",
+  "description": "Create a skill that knows how to run this project’s app"
+ },
+ {
+  "name": "/sandbox",
+  "description": "◯ sandbox disabled (⏎ to configure)"
+ },
+ {
+  "name": "/schedule",
+  "description": "Create and manage scheduled tasks that run in the cloud"
+ },
+ {
+  "name": "/scroll-speed",
+  "description": "Adjust mouse wheel scroll speed"
+ },
+ {
+  "name": "/seam-craft",
+  "description": "Render-correctness doctrine for scene-to-scene seams in"
+ },
+ {
+  "name": "/security-review",
+  "description": "Complete a security review of the pending changes on the current"
+ },
+ {
+  "name": "/send-to-project",
+  "description": "Send this session's work to a Claude Project"
+ },
+ {
+  "name": "/setup-matt-pocock-skills",
+  "description": "Configure this repo for the engineering skills — set up its issue"
+ },
+ {
+  "name": "/ship",
+  "description": "Open a pull request if there is none, review it here, then watch"
+ },
+ {
+  "name": "/simplify",
+  "description": "Clean up the changed code without changing behavior"
+ },
+ {
+  "name": "/skill-creator:skill-creator",
+  "description": "(skill-creator) Create new skills, modify and improve existing"
+ },
+ {
+  "name": "/skill-doctor",
+  "description": "Show which loaded skills are unused and costing context"
+ },
+ {
+  "name": "/skills",
+  "description": "List available skills"
+ },
+ {
+  "name": "/slides",
+  "description": "Create strategic HTML presentations with Chart.js, design tokens,"
+ },
+ {
+  "name": "/slideshow",
+  "description": "Author a HyperFrames slideshow — a presentation, pitch deck, or"
+ },
+ {
+  "name": "/status",
+  "description": "Show version, account, model, MCP servers, and setup warnings"
+ },
+ {
+  "name": "/statusline",
+  "description": "Set up the status line"
+ },
+ {
+  "name": "/steward",
+  "description": "Watch your open pull request in this session and fix what comes up"
+ },
+ {
+  "name": "/stickers",
+  "description": "Check Claude Code sticker availability"
+ },
+ {
+  "name": "/subtask",
+  "description": "Send a subagent off with your full context; its result comes back"
+ },
+ {
+  "name": "/talking-head-recut",
+  "description": "Package an existing talking-head / interview / podcast video with"
+ },
+ {
+  "name": "/tasks",
+  "description": "View and manage this session's background work"
+ },
+ {
+  "name": "/tdd",
+  "description": "Test-driven development. Use when the user wants to build features"
+ },
+ {
+  "name": "/teach",
+  "description": "Teach the user a new skill or concept, within this workspace."
+ },
+ {
+  "name": "/team-onboarding",
+  "description": "Help teammates ramp on Claude Code with a guide from your usage"
+ },
+ {
+  "name": "/teleport",
+  "description": "Resume a cloud session here"
+ },
+ {
+  "name": "/terminal-setup",
+  "description": "Set up Shift+Enter for newlines"
+ },
+ {
+  "name": "/theme",
+  "description": "Change the theme"
+ },
+ {
+  "name": "/to-spec",
+  "description": "Turn the current conversation into a spec and publish it to the"
+ },
+ {
+  "name": "/to-tickets",
+  "description": "Break a plan, spec, or the current conversation into a set of"
+ },
+ {
+  "name": "/triage",
+  "description": "Move issues and external PRs through a state machine of triage"
+ },
+ {
+  "name": "/tui",
+  "description": "Set the terminal UI renderer (classic | fullscreen)"
+ },
+ {
+  "name": "/ui-styling",
+  "description": "Create beautiful, accessible user interfaces with shadcn/ui"
+ },
+ {
+  "name": "/ui-ux-pro-max",
+  "description": "UI/UX design intelligence. Searchable local database with 67"
+ },
+ {
+  "name": "/ultrareview",
+  "description": "3 free left · Start a cloud agent that finds and verifies bugs in"
+ },
+ {
+  "name": "/update-config",
+  "description": "Change settings: hooks, permissions, environment variables"
+ },
+ {
+  "name": "/upgrade",
+  "description": "Upgrade your plan for higher rate limits and more Opus"
+ },
+ {
+  "name": "/usage",
+  "description": "Show session cost, plan usage, and activity stats"
+ },
+ {
+  "name": "/usage-credits",
+  "description": "Configure usage credits or request them from your admin when you"
+ },
+ {
+  "name": "/use-modern-go",
+  "description": "Use the Modern Go Guidelines CLI whenever writing, modifying,"
+ },
+ {
+  "name": "/verify",
+  "description": "Try your change and report if it works"
+ },
+ {
+  "name": "/voice",
+  "description": "Toggle voice mode"
+ },
+ {
+  "name": "/wayfinder",
+  "description": "Plan a huge chunk of work — more than one agent session can hold —"
+ },
+ {
+  "name": "/web-setup",
+  "description": "Set up cloud sessions with your GitHub account"
+ },
+ {
+  "name": "/whiteboard",
+  "description": "Make a new Whiteboard artifact from a brief"
+ },
+ {
+  "name": "/writing-great-skills",
+  "description": "Reference for writing and editing skills well — the vocabulary and"
+ },
+ {
+  "name": "/xlsx",
+  "description": "Use this skill any time a spreadsheet file is the primary input or"
+ }
+]

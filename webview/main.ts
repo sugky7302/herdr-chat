@@ -1,15 +1,13 @@
 import './style.css';
 import type {
   AgentView,
-  ChatMessage,
   FromWebview,
   PresetView,
   ProjectState,
   TabView,
   ToWebview,
-  Transcript,
 } from '../src/shared';
-import { renderMarkdown } from './markdown';
+import { ChatView, type Draft } from './chat';
 
 declare function acquireVsCodeApi(): {
   postMessage(message: FromWebview): void;
@@ -25,27 +23,17 @@ type Route =
   | { view: 'pane'; paneId: string }
   | { view: 'newAgent'; tabId: string | null };
 
-interface PaneDraft {
-  text: string;
-  model?: string;
-  effort?: string;
-  modelDirty?: boolean;
-  effortDirty?: boolean;
-}
-
 const saved = vscode.getState() ?? {};
 let route: Route | null = saved.route ?? null;
 let state: ProjectState | null = null;
-let transcript: Transcript | null = null;
 let busyText: string | null = null;
 let errorText: string | null = null;
 let creatingWorktree = false;
-const drafts: Record<string, PaneDraft> = saved.drafts ?? {};
-/** 已送出但還沒出現在紀錄中的訊息。 */
-const pending: Record<string, string[]> = {};
+const drafts: Record<string, Draft> = saved.drafts ?? {};
 let newAgentChoice: { presetId?: string; model?: string; effort?: string; saveAsDefault?: boolean } = {};
 
 const app = document.getElementById('app')!;
+let lastStateJson = '';
 
 function send(message: FromWebview): void {
   vscode.postMessage(message);
@@ -76,18 +64,20 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
       break;
     }
     case 'transcript':
-      if (route?.view === 'pane' && route.paneId === message.transcript.paneId) {
-        settlePending(message.transcript);
-        transcript = message.transcript;
-        renderPaneBody();
-      }
+      if (route?.view === 'pane' && route.paneId === message.transcript.paneId) chat.setTranscript(message.transcript);
+      break;
+    case 'completions':
+      chat.onCompletions(message.requestId, message.items);
+      break;
+    case 'attachments':
+      chat.addAttachments(message.paneId, message.paths);
       break;
     case 'navigate':
       if (message.view === 'history') go({ view: 'history' });
       else go({ view: 'newAgent', tabId: currentTabId() });
       break;
     case 'openedPane':
-      transcript = null;
+      chat.clearTranscript();
       go({ view: 'pane', paneId: message.paneId });
       break;
     case 'busy':
@@ -204,20 +194,12 @@ function select(
 
 // ---------- 畫面 ----------
 
-let lastStateJson = '';
-
 function render(): void {
   const active = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
   const focusedId = active?.id;
   const selection =
     active && 'selectionStart' in active && active.selectionStart != null ? [active.selectionStart, active.selectionEnd ?? 0] : null;
-  const scrollTop = messagesElement?.scrollTop;
-  const wasAtBottom = messagesElement
-    ? messagesElement.scrollHeight - messagesElement.scrollTop - messagesElement.clientHeight < 40
-    : true;
-  composerKey = '';
   app.replaceChildren(renderHeader(), renderMain());
-  if (messagesElement && scrollTop != null && !wasAtBottom) messagesElement.scrollTop = scrollTop;
   if (busyText) app.append(h('div', { class: 'busy', role: 'status' }, h('span', { class: 'spinner' }), busyText));
   if (errorText)
     app.append(
@@ -332,6 +314,22 @@ function toolbar(title: string, back: Route | null, ...actions: Child[]): HTMLEl
   );
 }
 
+/** 列表的一列：主要按鈕加上滑過時出現的操作按鈕。 */
+function rowItem(main: HTMLElement, actions: { icon: string; label: string; run: () => void }[]): HTMLElement {
+  return h(
+    'li',
+    { class: 'row-wrap' },
+    main,
+    h(
+      'div',
+      { class: 'row-actions' },
+      ...actions.map((action) =>
+        h('button', { class: 'icon-button', title: action.label, 'aria-label': action.label, onclick: action.run }, icon(action.icon)),
+      ),
+    ),
+  );
+}
+
 function tabTitle(tab: TabView): string {
   const named = tab.agents.find((agent) => agent.title)?.title;
   return /^\d+$/.test(tab.label) && named ? named : tab.label;
@@ -352,9 +350,7 @@ function renderHistory(): HTMLElement {
           'ul',
           { class: 'list' },
           ...tabs.map((tab) =>
-            h(
-              'li',
-              {},
+            rowItem(
               h(
                 'button',
                 {
@@ -376,6 +372,10 @@ function renderHistory(): HTMLElement {
                   ),
                 ),
               ),
+              [
+                { icon: 'edit', label: '重新命名', run: () => send({ type: 'renameTab', tabId: tab.tabId }) },
+                { icon: 'trash', label: '關閉對話', run: () => send({ type: 'closeTab', tabId: tab.tabId }) },
+              ],
             ),
           ),
         )
@@ -391,34 +391,46 @@ function renderTab(tabId: string): HTMLElement {
     toolbar(
       tabTitle(tab),
       { view: 'history' },
-      h('button', { class: 'secondary small', onclick: () => go({ view: 'newAgent', tabId }) }, '＋ agent'),
+      h('button', { class: 'icon-button', title: '重新命名對話', 'aria-label': '重新命名對話', onclick: () => send({ type: 'renameTab', tabId }) }, icon('edit')),
+      h('button', { class: 'secondary small', onclick: () => go({ view: 'newAgent', tabId }) }, '＋ pane'),
     ),
     h(
       'ul',
       { class: 'list' },
       ...tab.agents.map((agent) =>
-        h(
-          'li',
-          {},
+        rowItem(
           h(
             'button',
-            { class: `row ${agent.focused ? 'active' : ''}`, onclick: () => { transcript = null; go({ view: 'pane', paneId: agent.paneId }); } },
+            { class: `row ${agent.focused ? 'active' : ''}`, onclick: () => { chat.clearTranscript(); go({ view: 'pane', paneId: agent.paneId }); } },
             statusDot(agent.status),
             h(
               'span',
               { class: 'row-text' },
-              h('span', { class: 'row-title' }, agent.name ?? agent.kind ?? '終端機'),
+              h('span', { class: 'row-title' }, agent.label || agent.name || agent.kind || '終端機'),
               h('span', { class: 'row-sub' }, [agent.kind, agent.title].filter(Boolean).join(' · ') || agent.paneId),
             ),
           ),
+          [
+            { icon: 'edit', label: '重新命名', run: () => send({ type: 'renamePane', paneId: agent.paneId }) },
+            { icon: 'trash', label: '關閉 pane', run: () => send({ type: 'closePane', paneId: agent.paneId }) },
+          ],
         ),
       ),
     ),
   );
 }
 
+const SHELL_PRESET: PresetView = {
+  id: '__shell__',
+  label: '終端機',
+  models: [],
+  efforts: [],
+  canSwitchModel: false,
+  canSwitchEffort: false,
+};
+
 function renderNewAgent(tabId: string | null): HTMLElement {
-  const presets = state!.presets;
+  const presets = [...state!.presets, SHELL_PRESET];
   const preset = presets.find((item) => item.id === newAgentChoice.presetId) ?? presets[0];
   if (preset && newAgentChoice.presetId !== preset.id) {
     newAgentChoice = { presetId: preset.id, model: preset.defaultModel, effort: preset.defaultEffort };
@@ -441,7 +453,7 @@ function renderNewAgent(tabId: string | null): HTMLElement {
   return h(
     'main',
     {},
-    toolbar('新增 agent', tab ? { view: 'tab', tabId: tab.tabId } : { view: 'history' }),
+    toolbar('新增 agent 或 pane', tab ? { view: 'tab', tabId: tab.tabId } : { view: 'history' }),
     h(
       'div',
       { class: 'form' },
@@ -511,238 +523,49 @@ function renderNewAgent(tabId: string | null): HTMLElement {
 
 // ---------- 對話頁 ----------
 
-let messagesElement: HTMLElement | null = null;
-let composerElement: HTMLElement | null = null;
+const chat = new ChatView({
+  send,
+  persist,
+  h,
+  icon,
+  agent: (paneId) => findAgent(paneId)?.agent,
+  preset: presetFor,
+  drafts,
+});
 
 function renderPane(paneId: string): HTMLElement {
   const found = findAgent(paneId);
   const agent = found?.agent;
   const back: Route = found ? { view: 'tab', tabId: found.tab.tabId } : { view: 'history' };
-  messagesElement = h('div', { class: 'messages', role: 'log', 'aria-live': 'polite' });
-  composerElement = h('div', { class: 'composer' });
-  const main = h(
+  const screenOn = chat.screenOpen.has(paneId);
+  return h(
     'main',
     { class: 'pane' },
     toolbar(
-      agent?.name ?? agent?.kind ?? paneId,
+      agent?.label || agent?.name || agent?.kind || paneId,
       back,
       agent ? statusDot(agent.status) : null,
       h(
         'button',
         {
-          class: `icon-button ${screenOpen.has(paneId) ? 'toggled' : ''}`,
+          class: `icon-button ${screenOn ? 'toggled' : ''}`,
           title: '顯示終端機畫面與按鍵',
           'aria-label': '顯示終端機畫面與按鍵',
-          'aria-pressed': String(screenOpen.has(paneId)),
+          'aria-pressed': String(screenOn),
           onclick: () => {
-            const show = !screenOpen.has(paneId);
-            if (show) screenOpen.add(paneId);
-            else screenOpen.delete(paneId);
-            send({ type: 'showScreen', paneId, show });
+            if (screenOn) chat.screenOpen.delete(paneId);
+            else chat.screenOpen.add(paneId);
+            send({ type: 'showScreen', paneId, show: !screenOn });
             render();
           },
         },
         icon('terminal'),
       ),
-      h(
-        'button',
-        { class: 'icon-button', title: '在 herdr 中聚焦此 pane', 'aria-label': '在 herdr 中聚焦此 pane', onclick: () => send({ type: 'focusPaneInHerdr', paneId }) },
-        icon('focus'),
-      ),
+      h('button', { class: 'icon-button', title: '重新命名', 'aria-label': '重新命名', onclick: () => send({ type: 'renamePane', paneId }) }, icon('edit')),
+      h('button', { class: 'icon-button', title: '在 herdr 中聚焦此 pane', 'aria-label': '在 herdr 中聚焦此 pane', onclick: () => send({ type: 'focusPaneInHerdr', paneId }) }, icon('focus')),
     ),
-    messagesElement,
-    composerElement,
+    ...chat.mount(paneId),
   );
-  renderPaneBody();
-  return main;
-}
-
-function renderPaneBody(): void {
-  if (route?.view !== 'pane' || !messagesElement || !composerElement) return;
-  const paneId = route.paneId;
-  const atBottom = messagesElement.scrollHeight - messagesElement.scrollTop - messagesElement.clientHeight < 40;
-  const items: HTMLElement[] = [];
-  if (!transcript || transcript.paneId !== paneId) {
-    items.push(h('div', { class: 'muted pad' }, h('span', { class: 'spinner' }), '讀取對話…'));
-  } else {
-    if (transcript.source === 'terminal' && transcript.messages[0]?.role === 'terminal') {
-      items.push(h('div', { class: 'notice' }, '這個 agent 沒有可讀的對話紀錄，以下是終端機畫面。'));
-    }
-    for (const message of transcript.messages) items.push(renderMessage(message));
-    for (const text of pending[paneId] ?? []) items.push(renderMessage({ role: 'user', text }, true));
-  }
-  messagesElement.replaceChildren(...items);
-  if (atBottom || !messagesElement.dataset.scrolled) {
-    messagesElement.scrollTop = messagesElement.scrollHeight;
-    messagesElement.dataset.scrolled = '1';
-  }
-  renderComposer(paneId);
-}
-
-function renderMessage(message: ChatMessage, isPending = false): HTMLElement {
-  switch (message.role) {
-    case 'user':
-      return h('div', { class: `bubble user ${isPending ? 'pending' : ''}` }, message.text);
-    case 'assistant': {
-      const body = h('div', { class: 'bubble assistant markdown' });
-      body.innerHTML = renderMarkdown(message.text);
-      return body;
-    }
-    case 'tool':
-      return h('div', { class: 'tool' }, icon('tool'), h('strong', {}, message.tool ?? 'tool'), ' ', h('span', {}, message.text));
-    case 'terminal':
-      return h('pre', { class: 'terminal' }, message.text);
-    default:
-      return h('div', { class: 'notice' }, message.text);
-  }
-}
-
-function settlePending(next: Transcript): void {
-  const list = pending[next.paneId];
-  if (!list?.length) return;
-  const userTexts = next.messages.filter((message) => message.role === 'user' || message.role === 'terminal').map((m) => m.text);
-  pending[next.paneId] = list.filter((text) => !userTexts.some((existing) => existing.includes(text.trim())));
-}
-
-let composerKey = '';
-/** 使用者開啟終端機畫面的 pane。 */
-const screenOpen = new Set<string>();
-
-const SCREEN_KEYS: { label: string; keys: string[]; title: string }[] = [
-  { label: '↑', keys: ['up'], title: '上' },
-  { label: '↓', keys: ['down'], title: '下' },
-  { label: 'Enter', keys: ['enter'], title: '確認' },
-  { label: 'Esc', keys: ['esc'], title: '取消' },
-  { label: 'Tab', keys: ['tab'], title: 'Tab' },
-  { label: '1', keys: ['1'], title: '選項 1' },
-  { label: '2', keys: ['2'], title: '選項 2' },
-  { label: '3', keys: ['3'], title: '選項 3' },
-];
-
-function renderScreenCard(paneId: string, screen: string, blocked: boolean): HTMLElement {
-  const lines = screen.split('\n');
-  // 只顯示最後 18 行非空白內容，避免卡片太高。
-  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-  return h(
-    'section',
-    { class: `screen-card ${blocked ? 'blocked' : ''}`, 'aria-label': '終端機畫面' },
-    h('div', { class: 'screen-title' }, blocked ? '⚠ agent 正在等你回應' : '終端機畫面'),
-    h('pre', { class: 'terminal' }, lines.slice(-18).join('\n')),
-    h(
-      'div',
-      { class: 'screen-keys' },
-      ...SCREEN_KEYS.map((item) =>
-        h('button', { class: 'secondary small', title: item.title, onclick: () => send({ type: 'keys', paneId, keys: item.keys }) }, item.label),
-      ),
-    ),
-  );
-}
-
-function renderComposer(paneId: string): void {
-  const found = findAgent(paneId);
-  const agent = found?.agent;
-  const preset = presetFor(agent);
-  const key = JSON.stringify([
-    paneId,
-    agent?.status,
-    preset?.id,
-    transcript?.paneId === paneId ? [transcript.model, transcript.effort, transcript.screen] : null,
-    screenOpen.has(paneId),
-  ]);
-  if (key === composerKey && composerElement!.childElementCount) return;
-  composerKey = key;
-  const draft = (drafts[paneId] ??= { text: '' });
-  const currentModel = transcript?.paneId === paneId ? transcript.model : undefined;
-  const currentEffort = transcript?.paneId === paneId ? transcript.effort : undefined;
-  if (!draft.modelDirty) draft.model = currentModel;
-  if (!draft.effortDirty) draft.effort = currentEffort;
-
-  const existing = composerElement!.querySelector('textarea');
-  const hadFocus = existing === document.activeElement;
-  const selection = existing ? [existing.selectionStart, existing.selectionEnd] : null;
-
-  const textarea = h('textarea', {
-    id: `composer-${paneId}`,
-    rows: 3,
-    placeholder: agent?.status === 'blocked' ? 'agent 正在等你回應，請用上方按鍵處理' : '輸入訊息，Enter 送出，Shift+Enter 換行',
-    'aria-label': '訊息',
-    value: draft.text,
-    oninput: (event: Event) => {
-      draft.text = (event.target as HTMLTextAreaElement).value;
-      persist();
-    },
-    onkeydown: (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-        event.preventDefault();
-        submit();
-      }
-    },
-  });
-
-  const submit = () => {
-    const text = draft.text.trim();
-    if (!text) return;
-    send({
-      type: 'send',
-      paneId,
-      text,
-      model: draft.modelDirty ? draft.model : undefined,
-      effort: draft.effortDirty ? draft.effort : undefined,
-    });
-    (pending[paneId] ??= []).push(text);
-    draft.text = '';
-    draft.modelDirty = false;
-    draft.effortDirty = false;
-    persist();
-    composerKey = '';
-    renderPaneBody();
-    document.getElementById(`composer-${paneId}`)?.focus();
-  };
-
-  const controls: Child[] = [];
-  if (preset?.models.length) {
-    const element = select(preset.models, draft.model, '模型', (value) => {
-      draft.model = value || undefined;
-      draft.modelDirty = Boolean(value) && value !== currentModel;
-      persist();
-    }, { current: currentModel, placeholder: currentModel ? undefined : '目前模型' });
-    if (!preset.canSwitchModel) {
-      element.disabled = true;
-      element.title = '這個 agent 不支援在對話中切換模型。請新增 agent 時選擇。';
-    }
-    controls.push(element);
-  }
-  if (preset?.efforts.length) {
-    const element = select(preset.efforts, draft.effort, 'Effort', (value) => {
-      draft.effort = value || undefined;
-      draft.effortDirty = Boolean(value) && value !== currentEffort;
-      persist();
-    }, { current: currentEffort, placeholder: currentEffort ? undefined : '目前 effort' });
-    if (!preset.canSwitchEffort) {
-      element.disabled = true;
-      element.title = '這個 agent 不支援在對話中切換 effort。請新增 agent 時選擇。';
-    }
-    controls.push(element);
-  }
-  const working = agent?.status === 'working';
-  controls.push(h('div', { class: 'spacer' }));
-  controls.push(
-    working
-      ? h('button', { class: 'icon-button stop', title: '中斷（Esc）', 'aria-label': '中斷', onclick: () => send({ type: 'interrupt', paneId }) }, icon('stop'))
-      : null,
-    h('button', { class: 'icon-button send', title: '送出', 'aria-label': '送出', disabled: !agent, onclick: submit }, icon('send')),
-  );
-
-  const screen = transcript?.paneId === paneId ? transcript.screen : undefined;
-  composerElement!.replaceChildren(
-    screen !== undefined ? renderScreenCard(paneId, screen, agent?.status === 'blocked') : '',
-    textarea,
-    h('div', { class: 'composer-row' }, ...controls),
-  );
-  if (hadFocus) {
-    textarea.focus();
-    if (selection) textarea.setSelectionRange(selection[0], selection[1]);
-  }
 }
 
 render();

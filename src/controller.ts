@@ -14,13 +14,21 @@ import {
   toPresetView,
   type AgentPreset,
 } from './presets';
-import type { AgentView, ProjectState, TabView, ToWebview, Transcript, WorktreeView } from './shared';
+import type { AgentView, CompletionItem, ProjectState, QueuedView, TabView, ToWebview, Transcript, WorktreeView } from './shared';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import { Commands } from './commands';
 import { TranscriptSource } from './transcript/source';
-import { effortLabel, menuKind, nextKey, normalizeLabel, parseMenu, type MenuKind } from './codexMenu';
+import { effortLabel, menuKind, nextKey, normalizeLabel, parseDialog, parseMenu, type MenuKind } from './codexMenu';
 
 const run = promisify(execFile);
 
 /** 每個 pane 由擴充功能記住的設定。herdr 不保存這些資料。 */
+interface QueuedMessage extends QueuedView {
+  model?: string;
+  effort?: string;
+}
+
 interface PaneMemory {
   presetId: string;
   model?: string;
@@ -28,6 +36,8 @@ interface PaneMemory {
 }
 
 const PANE_MEMORY_KEY = 'herdr.paneMemory';
+/** 新增空白終端機 pane 的特殊選項代號。 */
+export const SHELL_PRESET = '__shell__';
 const SELECTED_WORKTREE_KEY = 'herdr.selectedWorktree';
 
 export class Controller implements vscode.Disposable {
@@ -41,6 +51,11 @@ export class Controller implements vscode.Disposable {
   private openPaneId: string | null = null;
   /** 使用者開啟「終端機畫面」的 pane。 */
   private screenPanes = new Set<string>();
+  /** 每個 pane 的訊息佇列。agent 回到空閒後依序送出。 */
+  private queues = new Map<string, QueuedMessage[]>();
+  private delivering = new Set<string>();
+  private nextQueueId = 1;
+  private readonly commands: Commands;
   private refreshTimer: NodeJS.Timeout | undefined;
   private pollTimer: NodeJS.Timeout | undefined;
   private refreshing: Promise<void> | null = null;
@@ -50,13 +65,16 @@ export class Controller implements vscode.Disposable {
   constructor(
     private readonly memento: vscode.Memento,
     private readonly post: (message: ToWebview) => void,
+    globalMemento?: vscode.Memento,
   ) {
     this.client = new HerdrClient(resolveSocketPath(config().get<string>('socketPath')));
     this.transcripts = new TranscriptSource(this.client, () => config().get<number>('transcriptLines') ?? 400);
     this.events = new HerdrEvents(this.client);
+    this.commands = new Commands(globalMemento ?? memento);
     this.events.on('change', () => this.scheduleRefresh(150));
     this.events.on('connected', () => this.scheduleRefresh(0));
     this.events.on('disconnected', () => this.scheduleRefresh(0));
+    this.events.on('subscribeFailed', () => this.scheduleRefresh(500));
     this.events.start();
     // 事件可能漏接（例如終端機標題改變），所以另外每 5 秒檢查一次。
     this.pollTimer = setInterval(() => this.scheduleRefresh(0), 5000);
@@ -188,6 +206,7 @@ export class Controller implements vscode.Disposable {
         this.snapshot.panes.filter((pane) => pane.workspace_id === state.workspaceId).map((pane) => pane.pane_id),
       );
       this.publish(state);
+      this.drainQueues();
       if (this.openPaneId) await this.pushTranscript();
     } catch (error) {
       this.publish({ ...base, error: describe(error) });
@@ -228,6 +247,7 @@ export class Controller implements vscode.Disposable {
             const presetId = memory[pane.pane_id]?.presetId ?? presetForKind(presets, kind)?.id ?? null;
             return {
               paneId: pane.pane_id,
+              label: pane.label || null,
               name: agent.name ?? null,
               kind: agent.display_agent ?? kind,
               presetId,
@@ -285,9 +305,15 @@ export class Controller implements vscode.Disposable {
     const memory = this.paneMemory()[paneId];
     transcript.model ??= memory?.model;
     transcript.effort ??= memory?.effort;
-    if (transcript.source !== 'terminal' && (pane.agent_status === 'blocked' || this.screenPanes.has(paneId))) {
-      transcript.screen = await this.readScreen(paneId).catch(() => undefined);
+    // herdr 不一定把確認畫面回報為 blocked（例如信任資料夾畫面是 unknown 或 idle），
+    // 所以只要 pane 有 agent 就讀取畫面，偵測到選項時顯示按鈕。
+    if (pane.agent || this.screenPanes.has(paneId)) {
+      const screen = await this.readScreen(paneId).catch(() => undefined);
+      const dialog = screen && pane.agent ? parseDialog(screen) : [];
+      if (dialog.length) transcript.dialog = dialog;
+      if (this.screenPanes.has(paneId) || dialog.length || pane.agent_status === 'blocked') transcript.screen = screen;
     }
+    transcript.queue = (this.queues.get(paneId) ?? []).map(({ id, text, attachments }) => ({ id, text, attachments }));
     if (this.openPaneId === paneId) this.post({ type: 'transcript', transcript });
   }
 
@@ -361,6 +387,12 @@ export class Controller implements vscode.Disposable {
    * 回傳新 agent 所在的 pane。
    */
   async newAgent(presetId: string, tabId: string | null, model?: string, effort?: string): Promise<string> {
+    if (presetId === SHELL_PRESET) {
+      this.requireWorkspace();
+      const paneId = tabId ? await this.splitPane(tabId) : await this.createTab('終端機');
+      await this.refresh();
+      return paneId;
+    }
     const preset = this.presets().find((item) => item.id === presetId);
     if (!preset) throw new Error(`找不到選項 ${presetId}。`);
     model ||= preset.defaultModel;
@@ -393,6 +425,11 @@ export class Controller implements vscode.Disposable {
     const panes = (this.snapshot?.panes ?? []).filter((pane) => pane.tab_id === tabId);
     const idle = panes.find((pane) => !pane.agent && !this.paneMemory()[pane.pane_id]);
     if (idle) return idle.pane_id;
+    return this.splitPane(tabId);
+  }
+
+  private async splitPane(tabId: string): Promise<string> {
+    const panes = (this.snapshot?.panes ?? []).filter((pane) => pane.tab_id === tabId);
     const target = panes[panes.length - 1];
     const result = await this.client.request<any>('pane.split', {
       target_pane_id: target?.pane_id ?? null,
@@ -437,7 +474,87 @@ export class Controller implements vscode.Disposable {
    * 送出訊息。模型或 effort 與上次不同時，先送 agent 自己的切換指令。
    * 這與 Claude 及 Codex 的 VS Code 擴充功能相同：選單的設定在下一則訊息生效。
    */
-  async send(paneId: string, text: string, model?: string, effort?: string): Promise<void> {
+  async send(
+    paneId: string,
+    text: string,
+    options: { model?: string; effort?: string; attachments?: string[]; mode?: 'queue' | 'now' } = {},
+  ): Promise<void> {
+    const pane = this.pane(paneId);
+    if (!pane) throw new Error('這個 pane 已經關閉。');
+    const message: QueuedMessage = {
+      id: this.nextQueueId++,
+      text,
+      attachments: options.attachments ?? [],
+      model: options.model,
+      effort: options.effort,
+    };
+    const busy = pane.agent_status === 'working' || pane.agent_status === 'blocked';
+    const queue = this.queues.get(paneId) ?? [];
+    if (options.mode !== 'now' && (busy || queue.length || this.delivering.has(paneId))) {
+      queue.push(message);
+      this.queues.set(paneId, queue);
+      await this.pushTranscript();
+      return;
+    }
+    if (options.mode === 'now' && busy && (message.model || message.effort)) {
+      throw new Error('agent 工作中無法切換模型或 effort。請等它完成，或改用佇列送出。');
+    }
+    await this.deliver(paneId, message);
+  }
+
+  removeQueued(paneId: string, id: number): void {
+    const queue = this.queues.get(paneId) ?? [];
+    this.queues.set(paneId, queue.filter((item) => item.id !== id));
+    void this.pushTranscript();
+  }
+
+  /** 把佇列中的訊息立刻送出（插入正在進行的回合）。 */
+  async insertQueued(paneId: string, id: number): Promise<void> {
+    const queue = this.queues.get(paneId) ?? [];
+    const item = queue.find((entry) => entry.id === id);
+    if (!item) return;
+    this.queues.set(paneId, queue.filter((entry) => entry.id !== id));
+    await this.deliver(paneId, { ...item, model: undefined, effort: undefined });
+  }
+
+  /** agent 回到空閒時送出佇列的第一則。 */
+  private drainQueues(): void {
+    for (const [paneId, queue] of this.queues) {
+      if (!queue.length || this.delivering.has(paneId)) continue;
+      const pane = this.pane(paneId);
+      if (!pane) {
+        this.queues.delete(paneId);
+        continue;
+      }
+      if (pane.agent && pane.agent_status !== 'idle' && pane.agent_status !== 'done') continue;
+      const item = queue.shift()!;
+      void this.deliver(paneId, item).catch((error) => this.post({ type: 'error', text: describe(error) }));
+    }
+  }
+
+  /** 把附加檔案轉成 agent 認得的引用：專案內用相對路徑，前面加 @。 */
+  private withAttachments(text: string, attachments: string[]): string {
+    if (!attachments.length) return text;
+    const root = this.selectedWorktreePath();
+    const refs = attachments.map((file) => {
+      const relative = path.relative(root, file);
+      const shown = relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : file;
+      return /\s/.test(shown) ? `@"${shown}"` : `@${shown}`;
+    });
+    return `${text}\n\n${refs.join(' ')}`.trim();
+  }
+
+  private async deliver(paneId: string, item: QueuedMessage): Promise<void> {
+    this.delivering.add(paneId);
+    try {
+      await this.deliverNow(paneId, this.withAttachments(item.text, item.attachments), item.model, item.effort);
+    } finally {
+      this.delivering.delete(paneId);
+      this.scheduleRefresh(300);
+    }
+  }
+
+  private async deliverNow(paneId: string, text: string, model?: string, effort?: string): Promise<void> {
     const pane = this.pane(paneId);
     if (!pane) throw new Error('這個 pane 已經關閉。');
     const memory = this.paneMemory()[paneId];
@@ -566,6 +683,136 @@ export class Controller implements vscode.Disposable {
     if (closed.kind !== 'none') return fail('選單沒有關閉。');
   }
 
+  // ---------- tab 與 pane 管理 ----------
+
+  async renameTab(tabId: string): Promise<void> {
+    const tab = this.snapshot?.tabs.find((item) => item.tab_id === tabId);
+    const label = await vscode.window.showInputBox({ title: '重新命名對話（tab）', value: tab?.label ?? '', prompt: '輸入新名稱' });
+    if (label === undefined || !label.trim()) return;
+    await this.client.request('tab.rename', { tab_id: tabId, label: label.trim() });
+    await this.refresh();
+  }
+
+  async closeTab(tabId: string): Promise<void> {
+    const tab = this.snapshot?.tabs.find((item) => item.tab_id === tabId);
+    const agents = (this.snapshot?.panes ?? []).filter((pane) => pane.tab_id === tabId && pane.agent).length;
+    const detail = agents ? `其中 ${agents} 個 agent 會一起結束。` : '其中的終端機會一起關閉。';
+    const choice = await vscode.window.showWarningMessage(`關閉對話「${tab?.label ?? tabId}」？`, { modal: true, detail }, '關閉');
+    if (choice !== '關閉') return;
+    await this.client.request('tab.close', { tab_id: tabId });
+    await this.refresh();
+  }
+
+  async renamePane(paneId: string): Promise<void> {
+    const pane = this.pane(paneId);
+    const label = await vscode.window.showInputBox({
+      title: '重新命名 pane',
+      value: pane?.label ?? pane?.name ?? '',
+      prompt: '輸入新名稱。留空會清除名稱。',
+    });
+    if (label === undefined) return;
+    await this.client.request('pane.rename', { pane_id: paneId, label: label.trim() || null });
+    await this.refresh();
+  }
+
+  async closePane(paneId: string): Promise<void> {
+    const pane = this.pane(paneId);
+    const name = pane?.label || pane?.name || pane?.agent || paneId;
+    const detail = pane?.agent ? '這個 pane 中的 agent 會結束。' : '這個終端機會關閉。';
+    const choice = await vscode.window.showWarningMessage(`關閉「${name}」？`, { modal: true, detail }, '關閉');
+    if (choice !== '關閉') return;
+    await this.client.request('pane.close', { pane_id: paneId });
+    this.queues.delete(paneId);
+    await this.refresh();
+  }
+
+  /** 在確認畫面選擇第 number 個選項：用方向鍵移動再按 Enter。 */
+  async chooseOption(paneId: string, number: number): Promise<void> {
+    for (let step = 0; step < 20; step++) {
+      const options = parseDialog(await this.readScreen(paneId));
+      const current = options.find((option) => option.highlighted);
+      if (!current) throw new Error('確認畫面已經關閉。');
+      if (current.number === number) break;
+      await this.client.request('pane.send_keys', { pane_id: paneId, keys: [number > current.number ? 'down' : 'up'] });
+      await sleep(80);
+    }
+    await this.client.request('pane.send_keys', { pane_id: paneId, keys: ['enter'] });
+    await sleep(300);
+    await this.refresh();
+  }
+
+  // ---------- @ 與 / 補全 ----------
+
+  async complete(paneId: string, trigger: '/' | '@', query: string): Promise<CompletionItem[]> {
+    if (trigger === '@') return this.completeFiles(query);
+    const pane = this.pane(paneId);
+    const preset = this.presetOf(paneId);
+    return this.commands.list(pane?.agent ?? preset?.kind ?? null, this.selectedWorktreePath(), preset?.slashCommands ?? [], query);
+  }
+
+  private async completeFiles(query: string): Promise<CompletionItem[]> {
+    const root = this.selectedWorktreePath();
+    const cleaned = query.replace(/[\[\]{}*?!]/g, '');
+    const glob = cleaned ? `**/*${cleaned}*` : '**/*';
+    const exclude = '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**,**/.venv/**,**/vendor/**}';
+    const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(vscode.Uri.file(root), glob), exclude, 200);
+    const lower = cleaned.toLowerCase();
+    return uris
+      .map((uri) => path.relative(root, uri.fsPath))
+      .sort((a, b) => score(a, lower) - score(b, lower) || a.length - b.length)
+      .slice(0, 40)
+      .map((relative) => ({
+        label: path.basename(relative),
+        description: path.dirname(relative) === '.' ? '' : path.dirname(relative),
+        insert: /\s/.test(relative) ? `@"${relative}" ` : `@${relative} `,
+        kind: 'file' as const,
+      }));
+  }
+
+  /** 從執行中的 agent 讀取完整的 / 指令清單（會在 pane 中打開選單再關閉）。 */
+  async refreshCommands(paneId: string): Promise<number> {
+    const pane = this.pane(paneId);
+    if (!pane?.agent) throw new Error('這個 pane 沒有 agent。');
+    if (pane.agent_status !== 'idle' && pane.agent_status !== 'done') throw new Error('請等 agent 空閒後再更新指令清單。');
+    return this.commands.harvest(pane.agent, {
+      type: (text) => this.client.request('pane.send_text', { pane_id: paneId, text }),
+      keys: (keys) => this.client.request('pane.send_keys', { pane_id: paneId, keys }),
+      read: () => this.readScreen(paneId),
+    });
+  }
+
+  // ---------- 附加檔案 ----------
+
+  async pickFiles(): Promise<string[]> {
+    const uris = await vscode.window.showOpenDialog({
+      canSelectMany: true,
+      canSelectFiles: true,
+      canSelectFolders: true,
+      defaultUri: vscode.Uri.file(this.selectedWorktreePath()),
+      openLabel: '附加',
+    });
+    return (uris ?? []).map((uri) => uri.fsPath);
+  }
+
+  /** 拖曳進來的檔案沒有路徑（例如從 Finder 或剪貼簿），先存到暫存資料夾。 */
+  async saveDroppedFiles(files: { name: string; base64: string }[]): Promise<string[]> {
+    const dir = path.join(os.tmpdir(), 'herdr-vscode', String(Date.now()));
+    await fs.mkdir(dir, { recursive: true });
+    const saved: string[] = [];
+    for (const file of files) {
+      const name = path.basename(file.name || 'file').replace(/[^\w.\-\u4e00-\u9fff]/g, '_') || 'file';
+      const target = path.join(dir, name);
+      await fs.writeFile(target, Buffer.from(file.base64, 'base64'));
+      saved.push(target);
+    }
+    return saved;
+  }
+
+  private presetOf(paneId: string): AgentPreset | undefined {
+    const memory = this.paneMemory()[paneId];
+    return this.presets().find((item) => item.id === memory?.presetId) ?? presetForKind(this.presets(), this.pane(paneId)?.agent);
+  }
+
   async interrupt(paneId: string): Promise<void> {
     const pane = this.pane(paneId);
     if (pane?.agent) await this.client.request('agent.send_keys', { target: paneId, keys: ['esc'] });
@@ -607,6 +854,15 @@ async function findGitRoot(): Promise<string | null> {
 /** 顯示路徑最後兩層，例如 9d81/main。 */
 function shortPath(value: string): string {
   return value.split(path.sep).slice(-2).join('/');
+}
+
+/** 檔名符合度：檔名開頭相同最好，其次檔名包含，最後路徑包含。 */
+function score(relative: string, query: string): number {
+  if (!query) return 0;
+  const base = path.basename(relative).toLowerCase();
+  if (base.startsWith(query)) return 0;
+  if (base.includes(query)) return 1;
+  return 2;
 }
 
 function samePath(a: string, b: string): boolean {

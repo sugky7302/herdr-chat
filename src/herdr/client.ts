@@ -165,7 +165,10 @@ export class HerdrEvents extends EventEmitter {
         }
         if (message.id === 'vscode:events') {
           if (message.error) {
-            this.emit('error', new HerdrError(message.error.code, message.error.message));
+            // 常見原因：訂閱的 pane 剛好被關閉。移除 pane 訂閱後重連，下一次更新會重新指定 pane。
+            this.emit('subscribeFailed', new HerdrError(message.error.code, message.error.message));
+            this.panes = [];
+            socket.destroy();
           } else {
             this.retryDelay = 1000;
             this.emit('connected');
