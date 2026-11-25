@@ -232,7 +232,7 @@ export class ChatView {
           items.push(h('div', { class: 'thinking' }, h('span', { class: 'spinner' }), t("Working…")));
         }
       }
-      this.messages.replaceChildren(...items);
+      this.messages.replaceChildren(...this.groupExchanges(items));
     }
     this.renderComposer();
     if (this.messages.isConnected) {
@@ -240,6 +240,36 @@ export class ChatView {
       else this.messages.scrollTop = scrollTop;
     }
     this.scrollButton?.classList.toggle('visible', !stick);
+  }
+
+  /**
+   * 把每則使用者訊息與後面的回覆包成一組。
+   * 使用者訊息在組內用 sticky 固定，捲動回覆時問題會停在上方，捲到下一組時換成下一個問題。
+   */
+  private groupExchanges(items: HTMLElement[]): HTMLElement[] {
+    const { h } = this.host;
+    const out: HTMLElement[] = [];
+    let group: HTMLElement | null = null;
+    for (const item of items) {
+      if (item.classList.contains('user')) {
+        group = h('div', { class: 'exchange' }, item);
+        const bubble = item.querySelector<HTMLElement>('.bubble');
+        const exchange = group;
+        // 問題固定在上方時，點一下會捲回這個問題的開頭。
+        bubble?.addEventListener('click', () => {
+          if (!this.messages || window.getSelection()?.toString()) return;
+          const offset = exchange.getBoundingClientRect().top - this.messages.getBoundingClientRect().top;
+          if (offset >= -1) return;
+          this.messages.scrollTo({ top: this.messages.scrollTop + offset, behavior: 'smooth' });
+        });
+        out.push(group);
+      } else if (group) {
+        group.append(item);
+      } else {
+        out.push(item);
+      }
+    }
+    return out;
   }
 
   /** 把連續的助理文字與工具呼叫合併成一個回覆區塊。 */
@@ -451,8 +481,9 @@ export class ChatView {
       h('button', { class: 'tool-button trigger', title: t("Mention a file (@)"), 'aria-label': t("Mention a file"), onclick: () => insertTrigger('@') }, '@'),
       h('button', { class: 'tool-button trigger', title: t("Commands (/)"), 'aria-label': t("Commands"), onclick: () => insertTrigger('/') }, '/'),
     ];
+    const pill: HTMLElement[] = [];
     if (preset?.models.length) {
-      toolbar.push(
+      pill.push(
         this.chipPicker('model', preset.models, draft.model, t("Model"), currentModel, !preset.canSwitchModel, (value) => {
           draft.model = value || undefined;
           draft.modelDirty = Boolean(value) && value !== currentModel;
@@ -461,7 +492,7 @@ export class ChatView {
       );
     }
     if (preset?.efforts.length) {
-      toolbar.push(
+      pill.push(
         this.chipPicker('effort', preset.efforts, draft.effort, t('Effort'), currentEffort, !preset.canSwitchEffort, (value) => {
           draft.effort = value || undefined;
           draft.effortDirty = Boolean(value) && value !== currentEffort;
@@ -469,6 +500,7 @@ export class ChatView {
         }),
       );
     }
+    if (pill.length) toolbar.push(h('span', { class: 'model-pill' }, ...pill));
     toolbar.push(h('div', { class: 'spacer' }));
     if (transcript?.usage) toolbar.push(this.renderUsage(transcript.usage));
     if (agent?.status === 'working') {
