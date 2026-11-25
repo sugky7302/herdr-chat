@@ -1,255 +1,234 @@
-# herdr Agents（VS Code 擴充功能）
+# Herdr Chat
 
-在 VS Code 右側邊欄與 Herdr agent 對話，查看同一個問題的分工、等待、回報與記憶。
+English | [繁體中文](README.zh-TW.md)
 
-**0.5.0：右上角新增設定，管理 agent／模型選單、Herdr 整合與本機 Skills。** 介面自動跟隨 VS Code 的顯示語言，支援繁體中文與英文。一個 tab 就是一個問題，pane 是參與這個問題的 agent。可以讓 Claude 擔任規劃者，建立或呼叫其他 agent；也可以在 Claude 無法繼續時，把規劃工作交接給另一個 agent。
+Chat with coding agents running in [Herdr](https://herdr.dev/tui/docs/) from the VS Code secondary sidebar. Browse your project's worktrees, switch between agent panes, read conversations and terminal output, and manage agent launch settings.
 
-## 顯示語言
+Herdr manages the terminal processes, workspaces, tabs, and panes. Herdr Chat provides a VS Code interface to those resources, with additional features for task collaboration and saving selected messages to an existing Claude-mem worker.
 
-擴充功能啟動時讀取 `vscode.env.language`，將同一個語系傳給側邊欄 webview，不需要另設 Herdr 語言選項。
+## Features
 
-| VS Code 顯示語言 | Herdr 介面 |
+- **Agent conversations:** read native transcripts for Claude Code, Codex, and Antigravity CLI when available, with terminal-output fallback for other agents or unavailable transcripts.
+- **Pane controls:** switch agents, inspect terminal output, focus a pane in Herdr, and rename or close tabs and panes.
+- **Message composition:** attach files, drop files, paste images, use `@` file completion, and browse `/` commands and local skills.
+- **Message queues:** queue messages while an agent is working, then edit, remove, or send them immediately.
+- **Agent settings:** customize launch presets, model IDs, effort values, and startup arguments at user or workspace scope.
+- **Herdr integrations:** inspect, install, update, or remove integrations through Herdr's native API.
+- **Local skills:** browse supported local skill directories and open the original `SKILL.md` files.
+- **Display language:** automatically follow VS Code's English or Traditional Chinese display language.
+
+[Task collaboration](#task-collaboration) and [memory saving](#saving-memories-with-claude-mem) are additional workflows. Choosing a planner is only needed when enabling collaboration for a tab.
+
+## Requirements
+
+| Component | Requirement |
 | --- | --- |
-| 繁體中文（`zh-tw`） | 繁體中文 |
-| 英文（`en`） | 英文 |
-| 目前沒有翻譯的其他語言 | 英文 |
+| VS Code | Version 1.105 or later within the supported VS Code engine range. |
+| Herdr | Installed and running, with its API socket accessible from the VS Code extension host. |
+| Project | An open Git repository for the main worktree, workspace, and chat views. Settings can also open without a repository. |
+| Agent CLIs | Install and authenticate the agents you want to use separately. |
+| Collaboration CLI | Node.js 20+ available in the agent's environment when using the extension's collaboration workflow. |
+| Claude-mem | An existing, reachable worker when using memory saving. |
 
-在 VS Code 命令選擇區執行 **Configure Display Language**（設定顯示語言），選擇語言並依 VS Code 提示重新啟動，Herdr 就會自動套用。日期、時間與數字也使用介面的語系格式。
+For development and tests, use **Node.js 24**, the version used to validate this repository. The test command uses `--experimental-strip-types`; Node.js 20 is sufficient for the bundled collaboration CLI, but not for the test suite.
 
-命令名稱、設定說明、按鈕、無障礙標籤、提示、錯誤，以及協作、記憶與交接畫面都已加入翻譯。新產生的協作系統事件保存訊息代號與參數，重新開啟後可依當前語系顯示；使用者對話、agent 回覆、記憶內容、自訂名稱、原生命令說明及舊版已保存的原文紀錄維持原樣。
+## Installation
 
-## 安裝與準備
-
-1. 安裝並啟動 Herdr，確認 VS Code 所在環境可以連到它的 API socket。
-2. 開啟 git 專案。擴充功能會對應目前的 worktree 與 Herdr workspace；尚未建立時，依側邊欄提示建立 workspace。
-3. 透過 VS Code 的「從 VSIX 安裝」安裝已建置的套件，或依下方開發步驟自行產生 `.vsix`。
-4. 啟動要使用的 agent，完成它本身的登入、初次設定與權限確認。
-
-協作 CLI 需要 agent 所在環境能執行 **Node.js 20+**。預設使用 `node`；若 agent 的 PATH 找不到 Node，可設定 `herdr.collaborationNodePath` 的絕對路徑，然後重新載入 VS Code 視窗。
-
-「保存成記憶」使用你既有的 Claude-mem worker。它是獨立功能；一般聊天與 agent 協作不需要先設定 Claude-mem。
-
-## 對應方式
-
-- git 專案中的每個 worktree 對應其 Herdr workspace。上方選單可以切換 worktree（分支），也可以新增 worktree。
-- 一個 tab 是一個問題；同一個 tab 內的 pane 是它的規劃者、實作者或檢查者。
-- 問題內有「對話／協作／記憶」三頁。問題標題、規劃者與交接入口跨頁保留。
-- agent 切換器只出現在「對話」。切換 agent 只切換對話內容，不會切換問題的協作紀錄或記憶。
-- 「歷史紀錄」可以切換目前的問題，也能讀取目前 worktree 已封存問題的協作與記憶。
-
-## 對話頁
-
-- 保留 Copilot Chat 風格的訊息與輸入框，工具呼叫顯示成一行摘要。
-- Claude 與 Codex 讀取各自的原生對話紀錄（`~/.claude/projects`、`~/.codex/sessions`）。其他 agent 顯示終端機文字。
-- 往上捲動後，右下角出現「捲到最新訊息」按鈕。
-- 輸入框：
-  - 📎 附加檔案；也可以拖曳檔案或貼上圖片。從 VS Code 檔案總管拖曳時請按住 Shift。
-  - `@` 搜尋專案檔案；`/` 列出該 agent 的指令（含 skill 與自訂指令）。清單不完整時，點「從 agent 更新清單」。
-  - 模型與 effort 選單在下一則訊息送出前生效：Claude 送出 `/model`、`/effort`；Codex 操作 `/model` 選單並按 `s`，只套用到目前 session。
-  - 右側顯示可取得的上下文用量。滑過可看累計 token、上下文上限與方案額度；實際欄位依 agent 提供的資料而定。
-- agent 工作中：Enter 把訊息加入佇列，完成後依序送出；⌘/Ctrl+Enter 或 ⚡ 立即插入目前的回合；Esc 中斷。
-- agent 跳出確認畫面時，選項顯示成按鈕，點選即可回應。
-- 修改佇列訊息時會保留附件與排隊順序。背景狀態更新不應中斷中文組字、目前草稿或閱讀歷史訊息的位置。
-- 對話工具列可顯示終端機畫面與操作按鍵，也可以直接在 Herdr 聚焦目前的 pane。
-
-需要顯示 Claude 額度時，可從命令選擇區執行「herdr: 啟用 Claude 用量顯示」。此功能會先取得確認，再備份與包裝既有的 Claude `statusLine`；「herdr: 停用 Claude 用量顯示」可還原。
-
-## 讓規劃者指揮其他 agent
-
-1. 在「對話」選擇要擔任規劃者的 agent，等它完成啟動與目前回合，再按「以 … 規劃」。
-2. Herdr 會把這個問題專用的協作入口送給規劃者。入口包含 task、generation 與本機連線資料；協作頁也提供「複製協作入口」。
-3. 規劃者可以用 `spawn` 在同一問題新增 agent，再用 `delegate` 派工；也能對同一 tab 裡已就緒的 agent 派工。使用者可在協作頁的「派工給 agent」直接發起工作。
-4. 切到任一 agent 的對話即可查看進度。協作頁保留原始派工者、目標、request ID、提示內容、回報與時間線，相關 pane 名稱可點選跳轉。
-
-自動建立 agent 僅提供設定了 Herdr 原生 `kind` 的 preset。以任意 `command` 啟動的自訂 shell preset 仍可用於原有聊天；要參與自動協作，必須先讓 Herdr 識別它的 agent 與原生 session。每個 worker session 同時只能有一個尚未結束的協作 request。
-
-### 完成要有明確回報
-
-派工訊息會附上 worker 應執行的完整 `report` 指令。worker 必須回報以下其中一個狀態，並提供實際修改、測試、失敗或剩餘工作：
-
-| 回報 | 用途 |
-| --- | --- |
-| `completed` | 已完成指定工作，附上結果與驗證證據。 |
-| `needs_input` | 需要釐清條件；規劃者或使用者用 `answer` 回覆同一個 request。 |
-| `failed` | 無法完成，交代原因與已完成的部分。 |
-
-原生 agent 的 `idle` 或 `done` 只代表它的執行狀態，**不會直接把協作 request 標為完成**。原生回合結束但尚未明確回報時，協作頁顯示「等待明確回報」。原生權限或選單造成的 `blocked`，需要到該 pane 處理；這和 worker 主動提出的釐清問題不同。
-
-`--wait` 等到完成、失敗、需要輸入、等待逾時或規劃者改變時返回。逾時與連線中斷表示結果尚未確認；查看 `status`、原 pane 或繼續 `wait`，不會自動重送原工作。CLI 的 `ok: true` 代表該次 RPC 成功，仍須閱讀回傳的 `reason` 與 request 狀態。
-
-### 協作 CLI 與原生 Herdr 的分工
-
-本擴充功能**沒有改寫原生 `herdr agent prompt` 指令**，也沒有替它新增 `--until done` 語意。協作使用隨擴充功能打包的 `dist/herdr-collab.cjs`，由本機 bridge 保存 request、路由與明確回報；底層仍透過 Herdr API 與 agent 溝通。
-
-完整指令的結構如下。路徑與大寫值是佔位示意，實際使用請保留 UI 複製入口中的 connection、task 與 generation：
+Build a VSIX from this repository:
 
 ```sh
-node /path/to/extension/dist/herdr-collab.cjs \
-  --connection /path/to/connection.json \
-  --task TASK_ID \
-  --generation GENERATION \
-  delegate TARGET_PANE_ID "Refactor the auth module and run tests" \
-  --wait --timeout 180000
-```
-
-同一個入口後面可接以下命令：
-
-| 命令 | 行為 |
-| --- | --- |
-| `status` | 讀取本問題與 agent 的目前狀態。 |
-| `spawn PRESET_ID` | 在本問題建立 agent；可加 `--model`、`--effort`。建立後仍需核對原生 session 與就緒狀態。 |
-| `delegate PANE_ID "工作內容" --wait --timeout 180000` | 派工並等待明確回報；可用 `--request-id` 指定這次要求的 ID。 |
-| `wait REQUEST_ID --timeout 180000` | 繼續等待同一份工作，不重新派工。 |
-| `answer REQUEST_ID "答覆" --wait` | 回覆釐清問題，沿用 request ID 並進入下一個 revision。 |
-| `report REQUEST_ID --revision N --status completed --text "結果"` | worker 的明確回報；status 亦可為 `needs_input` 或 `failed`。 |
-| `accept HANDOFF_ID` | 指定的新規劃者確認已讀交接資料並接手。 |
-
-`--timeout` 單位為毫秒，範圍為 1 至 180000，預設 180000。worker 的 request ID、generation 與 `report --revision` 由每次派工或續接訊息產生，應直接使用該訊息中的指令。CLI 讀取呼叫 pane 的 `HERDR_PANE_ID`，服務會核對 task、角色、原生 session 與 generation；不要用另一個 pane 的身分執行。
-
-命令參數以 [CLI 入口](src/collaboration/cli.ts) 為準；角色、等待與回報規則實作於 [collaboration service](src/collaboration/service.ts)。
-
-如果「協作入口傳送結果未確認」，UI 會保留不確定狀態並提供「複製協作入口」。把入口貼回原規劃者，執行 `status` 核對後繼續；畫面不會把送達不明當成成功，也不提供自動重送。
-
-## 保存成記憶
-
-在 user 或 assistant 的真實訊息旁按「保存成記憶」。若已選取該訊息內的一段文字，編輯區會帶入選取內容；否則帶入整段訊息。
-
-可以修改標題與內容。專案範圍依問題綁定的 checkout／cwd 決定；原始 pane、訊息角色、訊息位置與來源文字隨記憶保存，不會因切到另一個 agent 而改變。
-
-保存直接呼叫 Claude-mem 的 `/api/memory/save`，不需要模型重新摘要，因此 Claude 額度用完時仍可操作。只有 worker 回傳有效的真實記憶 ID 後，UI 才顯示成功。連線、認證、來源驗證或保存失敗時保留編輯草稿；修正問題後可重試。若傳送已發出但回應逾時，先到 Claude-mem 核對是否已有紀錄，再決定是否重試。
-
-「記憶」頁目前列出**本問題經本擴充功能保存的引用**，包含實際 Claude-mem ID、內容、專案與來源。它不是整個 Claude-mem 資料庫的瀏覽器，也不會自動把其他工具建立的記憶全部匯入。
-
-連線解析與保存回應的驗證見 [Claude-mem client](src/memory/claudeMem.ts)。
-
-## 手動交接規劃者
-
-Claude 額度不足、agent 無法繼續，或你想換一個規劃者時，使用問題上方的「交接規劃者」。目前由使用者發起交接，**沒有自動偵測額度並自動切換**。
-
-1. 查看由擴充功能組成的 checkpoint，再選擇同一問題的閒置 agent，或新建可自動協作的 preset。
-2. 送出後，舊規劃者的規劃權立即暫停；擴充功能會停止可核對到的舊規劃回合，既有 worker 繼續原 request。
-3. 新規劃者收到 checkpoint 與完整 `accept HANDOFF_ID` 指令。它必須先讀取資料，再從自己的 pane 執行 CLI `accept`。
-4. 只有服務收到有效的 `accept`，UI 才顯示新規劃者已接手。交接期間的回報先保存在本問題，接手後一起交付；後續回報改由新規劃者收取。
-
-checkpoint 使用已保存的目標、要求、派工、回報、記憶，以及可讀的原生對話片段與當下 Git 資訊；包含資料來源與擷取時間。它不依賴已耗盡額度的 Claude 再寫摘要，也不會把 Claude 的原生 session 轉換成 Codex session。較長的原文會截短，agent 接手後仍須核對實際檔案與測試結果。
-
-原始「誰派給誰」的紀錄保持不變。舊規劃者 pane 保留唯讀對話與保存記憶入口；若之後透過另一次交接重新成為現任規劃者，才恢復該角色。交接失敗或尚未確認時，不會假裝新規劃者已接手，舊規劃權仍保持暫停。失敗後可重新查看快照、選擇接手者再送出交接，原 worker 工作不重送。
-
-## tab 與 pane
-
-- 歷史紀錄中的問題可重新命名或關閉；對話工具列可重新命名、關閉目前 pane。
-- 「＋ agent」或右上角新增入口可以建立 agent，也保留新增空白終端機的功能。
-- 問題關閉後，擴充功能已保存的協作事件與記憶引用會封存；歷史頁可唯讀查看。目前不會還原已關閉的原生 pane，也不會在封存問題繼續派工。
-
-## 執行範圍與目前限制
-
-- **單一 owner：**同一 VS Code 工作區的協作資料由一個 extension host 寫入。另一個視窗若遇到 owner 鎖，請回到原視窗操作。
-- **本機協作 API：**bridge 由 extension host 啟動，只綁定 `127.0.0.1`，使用私有 connection 檔與 token；不是額外的常駐 daemon。CLI 與 agent 需要能存取同一份 connection 檔及本機端點，目前沒有跨機器的協作服務。
-- **原生就緒限制：**啟用、派工與交接時，服務會核對原生 session 和 `idle`／`done`；工作中、等待權限或狀態未知的 agent 不會被視為已就緒。UI 的既有目標選單目前只列閒置 agent。
-- **重啟不重播：**擴充功能重啟會保留 request、事件、交接與記憶引用，但無法恢復舊的等待連線；未確認的工作不會自動重送。重新開啟後複製目前的協作入口，先用 `status` 核對。
-- **完成與驗收分開：**worker 的 `completed` 是它的明確回報；請依回報的差異、測試與證據驗收實際工作。
-
-## 設定
-
-右上角的 **齒輪** 或命令選擇區的 **herdr: 設定** 可開啟設定頁。即使 Herdr 未連線或還沒開啟 Git 專案，仍可以編輯使用者 agent 選單、查看 catalog 與本機技能。
-
-### Agent 與模型
-
-- 選擇「使用者」或「工作區」範圍；多資料夾工作區寫入目前專案的資料夾設定。工作區可以繼承使用者選單，也可以另存自己的清單。
-- 啟用／停用、加入、移除 agent preset，設定模型 ID、effort 與預設值。停用選項會從新增 agent、自動派工與新建交接目標中移除；已經運作的 pane 保留。
-- 支援 Herdr 原生 `kind` 或自訂 shell `command`。進階設定可編輯啟動參數、模型參數範本、切換指令等欄位；既有自訂欄位會保留。
-- 顯示 Herdr v0.9.5 支援的 24 種原生 agent catalog。實際啟動能力以你安裝的 Herdr 版本與 agent CLI 為準。加入選單不會安裝 CLI，也不會啟動 agent。
-- 模型 ID 是提供給各 agent 的選項，能否使用取決於供應商、帳號與 agent 設定。新增模型時需要搭配該 agent 支援的 `modelArgs`；catalog 不會替不確定的 CLI 猜測模型參數。
-- `herdr.agentDefaults` 的專案預設值仍優先於 preset 中的預設值；設定頁會顯示提醒，可從進階 VS Code 設定修改。
-- 背景 pane 更新不會重建設定編輯區。儲存前會檢查設定與工作區版本；外部修改或切換工作區後，舊草稿會保留並提示重新整理。
-
-### Herdr 整合的安裝／移除
-
-整合頁透過原生 `integration.list`、`integration.install`、`integration.uninstall` API 檢查與更新 Herdr hooks／plugins。成功後再次查詢狀態；連線、舊版本或結果驗證失敗會顯示錯誤，不會把未知狀態當成已安裝。
-
-**「安裝 Herdr 整合」處理 agent 與 Herdr 的狀態／session 連接。CLI 程式與雲端模型的安裝是不同的動作。** 需要安裝 agent 軟體時，使用 catalog 的官方設定／安裝文件連結。此版本不會代管 npm、Homebrew、原生 installer 的軟體安裝，也不下載或刪除模型權重。
-
-Catalog 與 API target 依 [Herdr v0.9.5 原始碼](https://github.com/herdrdev/herdr/blob/v0.9.5/src/detect/mod.rs) 和 [integration schema](https://github.com/herdrdev/herdr/blob/v0.9.5/src/api/schema/integrations.rs) 核對。此版本 socket API 提供 17 種 integration；Letta 的整合僅有 Herdr CLI 入口，設定頁提供文件，不向 socket 傳送不存在的 target。較舊的 Herdr 缺少 API 時，其他設定仍可使用。
-
-### 本機 Skills
-
-Skills 頁列出標準本機目錄找到的技能，包含 agent、名稱、說明、範圍、路徑與呼叫方式，可重新整理或開啟原始 `SKILL.md`。它不執行技能程式，也不宣稱這些項目都已被正在執行的 agent 載入。
-
-| Agent | 專案目錄 | 使用者目錄 |
-| --- | --- | --- |
-| Claude Code | `.claude/skills` | `$CLAUDE_CONFIG_DIR/skills`，預設 `~/.claude/skills` |
-| Codex | `.agents/skills` | `~/.agents/skills`，以及保留相容的 `$CODEX_HOME/skills`（預設 `~/.codex/skills`） |
-| Antigravity CLI | `.agents/skills` | `~/.gemini/config/skills`、`~/.gemini/antigravity-cli/skills`、`~/.gemini/skills` |
-
-Codex 另掃描 `/etc/codex/skills`。專案來源依目前選取的 checkout；plugin、managed policy、帳號同步、額外目錄或 runtime manifest 可能提供其他技能，實際載入清單請以 agent 本身為準。聊天的 `/` 候選選單補上 Codex 技能，選取後插入原生 `$skill-name`；原有 Claude 自訂 commands 與 Codex prompts 保留。
-
-Herdr 本身提供一個教 agent 操作 pane、啟動協作者與等待回應的技能；載入技能的是各 agent 的 runtime。依 [Herdr 官方技能文件](https://herdr.dev/tui/docs/agent-skill/)，可在自己的環境執行：
-
-```sh
-# 查看目前 Herdr binary 隨附的技能
-herdr --skill
-
-# 安裝到支援的 agent 使用者範圍；省略 -g 則安裝到目前專案
-npx skills add herdrdev/herdr --skill herdr -g
-```
-
-這份原生 Herdr 技能與本擴充功能的「複製協作入口」互補；本擴充功能的 request、明確完成回報與 planner 交接仍使用問題專屬的協作 CLI。
-
-### 進階 VS Code 設定
-
-設定頁提供目前連線、socket 路徑、協作 Node 路徑、Claude-mem 設定位址與工作區信任狀態，並可開啟 VS Code 的完整設定。
-
-| 設定 | 預設值 | 說明 |
-| --- | --- | --- |
-| `herdr.claudeMemUrl` | 空字串 | Claude-mem worker 位址。留空沿用既有環境變數或設定檔。 |
-| `herdr.claudeMemSettingsPath` | 空字串 | 留空使用 `~/.claude-mem/settings.json`；讀取既有 worker 設定與本機 API token。 |
-| `herdr.collaborationNodePath` | `node` | agent 執行協作 CLI 的 Node.js 20+ 執行檔；變更後重新載入 VS Code 視窗。 |
-| `herdr.socketPath` | 空字串 | Herdr socket 路徑。留空依序採用 `HERDR_SOCKET_PATH`、`~/.config/herdr/herdr.sock`。 |
-| `herdr.transcriptLines` | `400` | 沒有可讀原生對話時，讀取的終端機行數。 |
-| `herdr.agentPresets` | 內建 preset | 可新增 Herdr `kind` 或任意 shell `command`；自動建立協作者只支援 `kind` preset。 |
-| `herdr.agentDefaults` | `{}` | 每個專案的預設模型與 effort。 |
-
-Claude-mem 位址優先採用 `herdr.claudeMemUrl`，接著是 `CLAUDE_MEM_WORKER_URL`、既有 `CLAUDE_MEM_WORKER_HOST`／`CLAUDE_MEM_WORKER_PORT` 設定。環境變數優先於設定檔；都未提供時使用本機 worker 的預設位址與每個使用者的預設 port。已設定的本機 token 只會傳給符合既有設定來源的 worker，不會借用模型供應商的 API key。
-
-協作 bridge 限本機；Claude-mem 的位址另可設定為 HTTPS worker，或使用本機 port forwarding。遠端 HTTP worker 不受支援。
-
-專案的預設模型與 effort 可寫在 `.vscode/settings.json`：
-
-```json
-{
-  "herdr.agentDefaults": {
-    "claude": { "model": "opus", "effort": "high" },
-    "codex": { "model": "gpt-6.2-sol", "effort": "xhigh" }
-  }
-}
-```
-
-## 開發
-
-協作 CLI 的執行需求為 Node.js 20+。開發測試另外需要支援 `--experimental-strip-types` 的 Node.js 版本；目前的 `npm test` 指令不能直接使用 Node.js 20 執行。
-
-```sh
+git clone https://github.com/sugky7302/herdr-chat.git
+cd herdr-chat
 npm ci
-npm run typecheck  # TypeScript 檢查
-npm run build      # 產生 extension、webview 與 dist/herdr-collab.cjs
-npm test           # 單元、DOM 與本機 transport 測試
-npm run package    # 產生 .vsix
+npm run build
+npm run package
 ```
 
-開發時可用 `npm run watch` 持續建置。查看協作 CLI 的 JSON 使用說明：
+In VS Code, run **Extensions: Install from VSIX…** and select the generated `herdr-vscode-*.vsix` file. The package filename retains the extension's existing `herdr-vscode` identifier.
+
+Then:
+
+1. Install and start [Herdr](https://herdr.dev/tui/docs/).
+2. Open your Git repository in VS Code.
+3. Open the **herdr** view in the secondary sidebar.
+4. Select a worktree and its Herdr workspace. If no matching workspace exists, use the view's create-workspace action.
+5. Select an existing agent pane or add an agent. Complete the agent's own authentication and initial prompts in its terminal.
+
+If the socket is not discovered automatically, set `herdr.socketPath`. Resolution checks that setting, then `HERDR_SOCKET_PATH`, then `~/.config/herdr/herdr.sock`.
+
+## Working with Herdr
+
+Herdr's [native concepts](https://herdr.dev/tui/docs/concepts/) remain the underlying structure: a workspace contains tabs, and a tab contains terminal panes. A pane can run an agent, a shell, or another process.
+
+Herdr Chat associates the selected Git worktree with a Herdr workspace. Its **Chat**, **Collaboration**, and **Memory** views share the currently selected tab; changing the active agent changes the conversation being viewed. The extension's task records group collaboration and memory references by tab.
+
+### Chat controls
+
+| Action | Control |
+| --- | --- |
+| Send a message | Enter. While the agent is working, the message is queued. |
+| Send immediately | Ctrl+Enter on Windows/Linux, Cmd+Enter on macOS, or the immediate-send button. |
+| Interrupt a working agent | Esc when the completion menu is closed, or the interrupt control. |
+| Find a project file | Type `@`. |
+| Find an agent command or local skill | Type `/`. Codex skill selections insert their native `$skill-name` invocation. |
+| Attach content | Use the attachment button, drop files, or paste an image. Hold Shift when dragging from the VS Code Explorer. |
+
+Model and effort switching depends on the configured preset and the agent CLI. Presets can use slash-command templates or Codex's interactive model menu. Changes apply before the next message is delivered.
+
+Context and usage information appears when the agent exposes data the extension can read. To enable the additional Claude usage display, run **herdr: Enable Claude Usage Display**. This explicitly installs a wrapper around Claude's existing `statusLine`, with a backup and a corresponding **herdr: Disable Claude Usage Display** restore command. The current wrapper requires a POSIX shell.
+
+## Settings
+
+Open the **gear button** in the view title or run **herdr: Settings**. The settings page remains available when Herdr is disconnected.
+
+### Agents and models
+
+Configure which presets appear when creating agents. Each preset uses either a native Herdr `kind` or a custom shell `command`.
+
+You can edit:
+
+- The preset ID, display name, and whether it is included in creation menus.
+- Model IDs, effort values, and their defaults.
+- Startup arguments and model/effort argument templates.
+- Conversation-time switching commands and additional slash commands.
+
+Disabling a preset removes it from new-agent and automatic-collaborator choices. Existing panes remain available. User and workspace settings are supported; in a multi-folder workspace, project settings use the current project's folder scope. `herdr.agentDefaults` takes precedence over the defaults within a preset.
+
+**Review bundled presets for your operating system, CLI version, and account.** They include example model lists and a macOS-specific DeepSeek command. Model IDs, effort levels, and custom commands are configurable, and their presence in a menu does not guarantee availability.
+
+The catalog lists **24 native agent kinds checked against Herdr v0.9.5**. It is a versioned reference, not a list of CLIs installed or authenticated on your machine. Adding a preset changes the menu; install the agent software separately using the linked setup instructions.
+
+### Herdr integrations
+
+Integration actions use Herdr's native `integration.list`, `integration.install`, and `integration.uninstall` APIs. After a change, the extension queries the state again before reporting verified success.
+
+These actions manage Herdr hooks or plugins for session and state integration. **They do not install or uninstall agent CLI software, and they do not download or delete model weights.**
+
+Available actions depend on the connected Herdr version. See the [Herdr integration documentation](https://herdr.dev/tui/docs/integrations/) for each integration's behavior.
+
+### Local skills
+
+The Skills page shows metadata, agent, scope, path, and invocation for skill files found in supported local directories. You can search, filter, refresh, and open a `SKILL.md` file.
+
+| Agent | Project directories | User directories |
+| --- | --- | --- |
+| Claude Code | `.claude/skills` | `$CLAUDE_CONFIG_DIR/skills`, defaulting to `~/.claude/skills`. |
+| Codex | `.agents/skills` | `~/.agents/skills` and the compatible `$CODEX_HOME/skills` location, defaulting to `~/.codex/skills`. |
+| Antigravity CLI | `.agents/skills` and the legacy `.agent/skills` location | `~/.gemini/config/skills`, `~/.gemini/antigravity-cli/skills`, and `~/.gemini/skills`. |
+
+Codex's `/etc/codex/skills` directory is also scanned. Project discovery uses the selected checkout's root. Plugins, managed configuration, account-synced skills, and extra directories may supply additional skills.
+
+This is a local file inventory. Each agent's runtime decides which skills it loads and uses; the extension does not install, remove, or universally enable skills.
+
+Herdr's own [operating skill](https://herdr.dev/tui/docs/agent-skill/) teaches agents to use the Herdr CLI. To read the version bundled with your installed Herdr binary:
 
 ```sh
-node dist/herdr-collab.cjs --help
+herdr --skill
 ```
 
-自動化測試涵蓋 task 狀態、明確回報、交接、session 核對、owner 鎖、CLI 與本機 HTTP transport、Claude-mem receipt 驗證，以及 webview 的範圍、草稿、IME、佇列與捲動。Herdr host 與 Claude-mem HTTP 回應使用測試替身；這不等於已完成真實 Herdr、Claude／Codex、Claude-mem 與 VS Code 視窗的端到端驗證。
+### Connection
 
-### 維護翻譯
+Inspect the Herdr connection, socket path, collaboration Node.js command, configured Claude-mem URL, and workspace trust state. Use **Open VS Code settings** for the complete configuration editor.
 
-執行中的介面文字共用 `src/l10n.ts`。英文原句是訊息代號與回退文字；繁中對照分別存放在 `src/l10n/host.ts`、`src/l10n/services.ts`、`src/l10n/webview.ts`，建置時會打包進 extension 與 webview，不需要額外下載翻譯。
+## Additional workflows
 
-新增介面文字時使用完整句子與索引參數，例如 `t('Rename {0}', name)`，並在所屬翻譯表新增對照。翻譯應在顯示時取得，避免在語系初始化前計算模組層級的顯示字串。使用者輸入和原生 agent 文字直接顯示，不應當作翻譯代號。
+### Task collaboration
 
-VS Code 的靜態命令與設定說明使用標準 `package.nls.json`（英文）和 `package.nls.zh-tw.json`（繁中），由 `package.json` 的 `%key%` 引用。新增語言時需同時增加這兩部分的翻譯與語系選擇規則。測試會檢查訊息代號、參數一致性、manifest 引用、語系啟動順序，以及英文／繁中 webview 的行為。
+Herdr Chat includes its own task-tracking workflow on top of Herdr. Enable it for a tab by selecting an agent and choosing the planner action. The selected agent receives the tab-specific collaboration entry; you can also copy that entry from the Collaboration view.
 
-版本變更見 [CHANGELOG.md](CHANGELOG.md)。
+The extension records delegation targets, prompts, request IDs, reports, questions, and events. Select a related pane to inspect its progress.
+
+The entry uses the bundled `dist/herdr-collab.cjs` CLI:
+
+| Command | Purpose |
+| --- | --- |
+| `status` | Inspect the current task, requests, and participating panes. |
+| `spawn PRESET_ID` | Create an agent in the same task tab using an enabled native-kind preset. |
+| `delegate PANE_ID "task" --wait --timeout 180000` | Send work and wait for its explicit report. |
+| `wait REQUEST_ID --timeout 180000` | Continue waiting for an existing request. |
+| `report REQUEST_ID --revision N --status completed --text "result"` | Report completion, a failure, or a need for input. |
+| `answer REQUEST_ID "reply" --wait` | Answer a clarification request and continue the same work. |
+| `accept HANDOFF_ID` | Confirm that the designated successor accepts a planner handoff. |
+
+Use the **complete entry copied from the UI**, including its connection, task, and generation arguments. The table shows command suffixes, not standalone shell commands. `--timeout` is in milliseconds, from 1 to 180000.
+
+This protocol belongs to Herdr Chat. Native `herdr agent prompt` remains a separate Herdr command. A native `idle` or `done` state does not complete an extension request: the worker must report `completed`, `needs_input`, or `failed`. A timeout or uncertain delivery does not automatically resend work.
+
+Automatic creation requires an enabled native `kind` preset. Custom shell agents can be started manually; participation in tracked collaboration requires Herdr to recognize the agent and a verifiable native session.
+
+See the [collaboration CLI](src/collaboration/cli.ts) and [service](src/collaboration/service.ts) for the full command and lifecycle rules.
+
+### Manual planner handoff
+
+A handoff captures a checkpoint from the saved goal, messages, requests, reports, memory references, readable conversation excerpts, and Git state. It does not require the current planner to produce another summary.
+
+The previous planner is paused, existing workers continue their requests, and the designated successor must explicitly `accept` before it becomes the active planner. Reports arriving during the handoff are retained for the successor.
+
+Handoff is user-initiated. Automatic quota-triggered failover and conversion between different agents' native sessions are not implemented.
+
+### Saving memories with Claude-mem
+
+With an existing Claude-mem worker configured, choose **Save as memory** on a user or assistant message. Select part of the message first to save an excerpt, then edit the title and content.
+
+Herdr Chat sends the text and source metadata to the worker without asking an agent to summarize it. It records a memory reference only after receiving a valid memory ID. Failed saves retain the draft; if delivery times out, check the worker before retrying.
+
+The Memory view lists references saved through this extension for the current task. It does not browse the entire Claude-mem database. Ordinary chat and task collaboration do not require Claude-mem.
+
+### History and execution scope
+
+- Closed task tabs retain their stored collaboration records and memory references as read-only history. They do not become resumable native panes.
+- One extension host owns a workspace's collaboration data at a time.
+- The collaboration bridge uses local loopback. Agents must be able to access its connection file and endpoint; there is no cross-machine collaboration service.
+- Native transcript files must be accessible to the extension host. If they cannot be read, the view falls back to terminal output.
+- Restarting the extension preserves recorded requests and events, but does not restore old wait connections or replay uncertain work.
+
+## Configuration reference
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `herdr.socketPath` | Empty | Override the Herdr API socket path. |
+| `herdr.transcriptLines` | `400` | Number of terminal lines used when a native transcript is unavailable. |
+| `herdr.agentPresets` | Bundled presets | Complete list of launch presets and model/effort options. |
+| `herdr.agentDefaults` | `{}` | Project defaults keyed by preset ID, overriding preset model/effort defaults. |
+| `herdr.collaborationNodePath` | `node` | Node.js 20+ executable used by agents for the collaboration CLI. Reload the window after changing it. |
+| `herdr.claudeMemUrl` | Empty | Override the Claude-mem worker URL. |
+| `herdr.claudeMemSettingsPath` | Empty | Override the Claude-mem settings file; defaults to `~/.claude-mem/settings.json`. |
+
+Claude-mem connection discovery reuses the existing worker's settings and environment variables, including `CLAUDE_MEM_WORKER_URL`, `CLAUDE_MEM_WORKER_HOST`, and `CLAUDE_MEM_WORKER_PORT`. The explicit extension URL takes priority. Remote workers require HTTPS, or access through local port forwarding. See the [Claude-mem client](src/memory/claudeMem.ts) for connection and authentication handling.
+
+## Display language
+
+The interface reads `vscode.env.language` when the extension starts:
+
+| VS Code display language | Herdr Chat interface |
+| --- | --- |
+| English | English |
+| Traditional Chinese (`zh-tw`) | Traditional Chinese |
+| Other languages without a translation | English fallback |
+
+Use **Configure Display Language** in VS Code and follow its restart instructions to change the interface language. User messages, agent output, custom names, and saved memory content retain their original text.
+
+## Development
+
+Use Node.js 24 and install dependencies with `npm ci`.
+
+```sh
+npm run typecheck
+npm run build
+npm test
+npm run package
+```
+
+Run the build before packaging; the package script does not build automatically. Use `npm run watch` for continuous builds and `node dist/herdr-collab.cjs --help` for the collaboration CLI reference.
+
+Automated checks cover configuration scopes, integration contracts, skill discovery, collaboration and handoff state, local transports, memory receipts, and webview behavior including drafts, queues, IME input, and scrolling. Tests use fixtures and mock services; they do not establish end-to-end compatibility with every Herdr, agent, or VS Code installation.
+
+Runtime translations live in [src/l10n.ts](src/l10n.ts) and [src/l10n/](src/l10n/). Static command and configuration text uses [package.nls.json](package.nls.json) and [package.nls.zh-tw.json](package.nls.zh-tw.json). Add translations and matching tests when introducing interface text.
+
+## Further reading
+
+- [繁體中文 README](README.zh-TW.md)
+- [Changelog](CHANGELOG.md)
+- [Herdr documentation](https://herdr.dev/tui/docs/)
+- [Herdr agent automation](https://herdr.dev/tui/docs/agent-automation/)
+- [License file](LICENSE)
