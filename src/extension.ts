@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Controller, describe } from './controller';
 import type { FromWebview, ToWebview } from './shared';
 import * as claudeUsage from './claudeUsage';
+import { createHash } from 'node:crypto';
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new HerdrViewProvider(context);
@@ -41,7 +42,14 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
   private view: vscode.WebviewView | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.controller = new Controller(context.workspaceState, (message) => this.post(message), context.globalState);
+    const workspaceKey = createHash('sha256').update(
+      context.storageUri?.toString() ?? vscode.workspace.workspaceFile?.toString()
+        ?? ((vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.toString()).sort().join('\n') || 'empty'),
+    ).digest('hex').slice(0, 24);
+    this.controller = new Controller(context.workspaceState, (message) => this.post(message), context.globalState, {
+      storageDir: vscode.Uri.joinPath(context.globalStorageUri, 'collaboration', workspaceKey).fsPath,
+      cliPath: vscode.Uri.joinPath(context.extensionUri, 'dist', 'herdr-collab.cjs').fsPath,
+    });
   }
 
   dispose(): void {
@@ -73,6 +81,30 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
           break;
         case 'openPane':
           c.setOpenPane(message.paneId);
+          break;
+        case 'openTask':
+          await c.openTask(message.tabId);
+          break;
+        case 'saveTaskMemory':
+          await this.taskOperation(message, 'memory', async () => ({ memoryId: await c.saveTaskMemory(message) }));
+          break;
+        case 'prepareHandoff':
+          await this.taskOperation(message, 'checkpoint', async () => ({ checkpoint: await c.prepareHandoff(message.tabId) }));
+          break;
+        case 'requestHandoff':
+          await this.taskOperation(message, 'handoff', async () => { await c.requestHandoff(message.tabId, message.target); return {}; });
+          break;
+        case 'delegateTask':
+          await this.taskOperation(message, 'delegate', async () => { await c.delegateTask(message.tabId, message.target, message.text); return {}; });
+          break;
+        case 'assignPlanner':
+          await this.taskOperation(message, 'planner', async () => { await c.assignPlanner(message.tabId, message.paneId); return {}; });
+          break;
+        case 'copyCollaborationPrompt':
+          await c.copyCollaborationPrompt(message.tabId);
+          break;
+        case 'answerTaskRequest':
+          await this.taskOperation(message, 'answer', async () => { await c.answerTaskRequest(message.tabId, message.requestId, message.text); return {}; });
           break;
         case 'focusTab':
           await c.focusTab(message.tabId);
@@ -185,6 +217,20 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
       } else {
         this.post({ type: 'error', text: describe(error) });
       }
+    }
+  }
+
+  /** Correlated replies keep an async result attached to its original problem and draft. */
+  private async taskOperation(
+    message: { tabId: string; operationId: string },
+    kind: Extract<ToWebview, { type: 'taskOperation' }>['kind'],
+    work: () => Promise<{ memoryId?: number; checkpoint?: string }>,
+  ): Promise<void> {
+    try {
+      const result = await work();
+      this.post({ type: 'taskOperation', tabId: message.tabId, operationId: message.operationId, kind, ...result });
+    } catch (error) {
+      this.post({ type: 'taskOperation', tabId: message.tabId, operationId: message.operationId, kind, error: describe(error) });
     }
   }
 

@@ -2,7 +2,7 @@
   "name": "herdr-vscode",
   "displayName": "herdr Agents",
   "description": "在 VS Code 右側邊欄顯示 herdr 在目前專案的 workspace、tab、agent 與對話。",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "publisher": "arvin",
   "private": true,
   "license": "UNLICENSED",
@@ -82,6 +82,21 @@
     "configuration": {
       "title": "herdr",
       "properties": {
+        "herdr.claudeMemUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Claude-mem worker URL。留空沿用 CLAUDE_MEM_WORKER_URL、worker host/port 環境變數或 ~/.claude-mem/settings.json。保存既有文字不呼叫模型。"
+        },
+        "herdr.claudeMemSettingsPath": {
+          "type": "string",
+          "default": "",
+          "description": "Claude-mem settings.json 路徑。留空使用 ~/.claude-mem/settings.json；沿用其中的 worker 位址與本機 API token。"
+        },
+        "herdr.collaborationNodePath": {
+          "type": "string",
+          "default": "node",
+          "description": "agent 執行協作 CLI 使用的 Node.js 20+ 執行檔。可填絕對路徑；變更後重新載入 VS Code 視窗。"
+        },
         "herdr.socketPath": {
           "type": "string",
           "default": "",

@@ -14,6 +14,8 @@ export interface ChatHost {
   agent(paneId: string): AgentView | undefined;
   preset(agent: AgentView | undefined): PresetView | undefined;
   drafts: Record<string, Draft>;
+  saveMemory?(paneId: string, message: ChatMessage, messageIndex: number, selectedText?: string): void;
+  readOnly?(paneId: string): string | undefined;
 }
 
 export interface Draft {
@@ -245,10 +247,12 @@ export class ChatView {
     const out: HTMLElement[] = [];
     let reply: HTMLElement | null = null;
     const agentName = agent?.label || agent?.name || agent?.kind || 'agent';
-    for (const message of messages) {
+    for (const [messageIndex, message] of messages.entries()) {
       if (message.role === 'user') {
         reply = null;
-        out.push(this.renderUser(message.text));
+        const turn = this.renderUser(message.text);
+        this.appendMemoryAction(turn, message, messageIndex, turn.querySelector('.bubble')!);
+        out.push(turn);
         continue;
       }
       if (message.role === 'notice') {
@@ -264,6 +268,7 @@ export class ChatView {
         const body = h('div', { class: 'markdown' });
         body.innerHTML = renderMarkdown(message.text);
         reply.append(body);
+        this.appendMemoryAction(reply, message, messageIndex, body);
       } else if (message.role === 'tool') {
         reply.append(
           h(
@@ -279,6 +284,20 @@ export class ChatView {
       }
     }
     return out;
+  }
+
+  private appendMemoryAction(parent: HTMLElement, message: ChatMessage, messageIndex: number, body: Element): void {
+    if (!this.host.saveMemory || !this.paneId || !message.text.trim()) return;
+    const paneId = this.paneId;
+    const { h } = this.host;
+    parent.append(h('div', { class: 'message-actions' }, h('button', {
+      class: 'link save-message-memory', title: '保存這段訊息或其中選取的內容',
+      onclick: () => {
+        const selection = window.getSelection();
+        const selectedText = selection?.rangeCount && body.contains(selection.getRangeAt(0).commonAncestorContainer) ? selection.toString() : undefined;
+        this.host.saveMemory?.(paneId, message, messageIndex, selectedText);
+      },
+    }, '保存成記憶')));
   }
 
   private renderUser(text: string, pending = false): HTMLElement {
@@ -301,8 +320,10 @@ export class ChatView {
     const agent = this.host.agent(paneId);
     const preset = this.host.preset(agent);
     const transcript = this.transcript?.paneId === paneId ? this.transcript : null;
+    const readOnly = this.host.readOnly?.(paneId);
     const key = JSON.stringify([
       paneId,
+      readOnly,
       agent?.status,
       preset?.id,
       transcript && [transcript.model, transcript.effort, transcript.screen, transcript.dialog, transcript.queue, transcript.usage],
@@ -330,6 +351,7 @@ export class ChatView {
       this.trackComposition(this.input);
     }
     const textarea = this.input;
+    textarea.disabled = Boolean(readOnly);
     if (textarea.value !== draft.text) textarea.value = draft.text;
     textarea.placeholder = waiting
         ? '請點選上方選項；選「Type something」後可在這裡輸入回答'
@@ -357,7 +379,7 @@ export class ChatView {
     };
 
     const submit = (mode: 'queue' | 'now') => {
-      if (this.composingElement === textarea) return;
+      if (this.composingElement === textarea || this.host.readOnly?.(paneId)) return;
       const text = draft.text.trim();
       const attachments = draft.attachments ?? [];
       if (!text && !attachments.length) return;
@@ -478,6 +500,10 @@ export class ChatView {
     parts.chips.hidden = !chips.length;
     parts.chips.replaceChildren(...chips);
     parts.toolbar.replaceChildren(...toolbar);
+    if (readOnly) {
+      parts.dialog.replaceChildren(h('div', { class: 'task-readonly-notice', role: 'status' }, readOnly));
+      for (const button of this.composer.querySelectorAll<HTMLButtonElement>('button')) button.disabled = true;
+    }
     autosize();
     const restoreFocus = focusedId ? document.getElementById(focusedId) : null;
     if (restoreFocus instanceof HTMLTextAreaElement && restoreFocus !== old) {

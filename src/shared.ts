@@ -1,4 +1,5 @@
 // extension 與 webview 共用的訊息格式。
+import type { CollaborationTask } from './collaboration/types';
 
 export type AgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
 
@@ -11,6 +12,8 @@ export interface PresetView {
   defaultEffort?: string;
   canSwitchModel: boolean;
   canSwitchEffort: boolean;
+  /** 自動啟動與等待需要 Herdr 能識別的 agent kind。 */
+  canAutomate?: boolean;
 }
 
 export interface WorktreeView {
@@ -115,6 +118,8 @@ export interface Transcript {
 
 export type ToWebview =
   | { type: 'state'; state: ProjectState }
+  | { type: 'collaborationState'; tasks: CollaborationTask[] }
+  | { type: 'taskOperation'; tabId: string; operationId: string; kind: 'memory' | 'handoff' | 'delegate' | 'planner' | 'checkpoint' | 'answer'; error?: string; memoryId?: number; checkpoint?: string }
   | { type: 'transcript'; transcript: Transcript }
   | { type: 'navigate'; view: 'history' | 'newAgent' }
   | { type: 'openedPane'; paneId: string }
@@ -128,6 +133,14 @@ export type FromWebview =
   | { type: 'ready' }
   | { type: 'refresh' }
   | { type: 'openPane'; paneId: string | null }
+  | { type: 'openTask'; tabId: string }
+  | { type: 'saveTaskMemory'; tabId: string; operationId: string; title: string; text: string; source?: { paneId: string; messageIndex: number; role: ChatRole; text: string } }
+  | { type: 'prepareHandoff'; tabId: string; operationId: string }
+  | { type: 'requestHandoff'; tabId: string; operationId: string; target: { paneId: string } | { presetId: string }; reason?: string }
+  | { type: 'delegateTask'; tabId: string; operationId: string; target: { paneId: string } | { presetId: string }; text: string }
+  | { type: 'assignPlanner'; tabId: string; paneId: string; operationId: string }
+  | { type: 'copyCollaborationPrompt'; tabId: string }
+  | { type: 'answerTaskRequest'; tabId: string; requestId: string; operationId: string; text: string }
   | { type: 'focusTab'; tabId: string }
   | { type: 'focusPaneInHerdr'; paneId: string }
   | { type: 'newTab' }

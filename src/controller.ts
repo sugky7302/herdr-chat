@@ -14,7 +14,10 @@ import {
   toPresetView,
   type AgentPreset,
 } from './presets';
-import type { AgentView, CompletionItem, ProjectState, QueuedView, TabView, ToWebview, Transcript, WorktreeView } from './shared';
+import type { AgentView, CompletionItem, FromWebview, ProjectState, QueuedView, TabView, ToWebview, Transcript, WorktreeView } from './shared';
+import { CollaborationService } from './collaboration/service';
+import type { AgentIdentity, CollaborationTask, LivePane } from './collaboration/types';
+import { ClaudeMemClient, memoryFingerprint } from './memory/claudeMem';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import { Commands } from './commands';
@@ -33,6 +36,24 @@ interface PaneMemory {
   presetId: string;
   model?: string;
   effort?: string;
+}
+
+interface TranscriptSnapshot {
+  identity: AgentIdentity;
+  transcript: Transcript;
+}
+
+function paneIdentity(pane: LivePane): AgentIdentity {
+  return {
+    paneId: pane.pane_id, tabId: pane.tab_id, harness: pane.agent ?? pane.display_agent ?? 'terminal',
+    terminalId: pane.terminal_id,
+    session: pane.agent_session ? { kind: pane.agent_session.kind, value: pane.agent_session.value, source: pane.agent_session.source } : undefined,
+  };
+}
+
+function sameIdentity(a: AgentIdentity, b: AgentIdentity): boolean {
+  return a.paneId === b.paneId && a.tabId === b.tabId && a.harness === b.harness
+    && a.terminalId === b.terminalId && a.session?.kind === b.session?.kind && a.session?.value === b.session?.value;
 }
 
 const PANE_MEMORY_KEY = 'herdr.paneMemory';
@@ -61,16 +82,52 @@ export class Controller implements vscode.Disposable {
   private refreshing: Promise<void> | null = null;
   private refreshAgain = false;
   private readonly disposables: vscode.Disposable[] = [];
+  readonly collaboration: CollaborationService;
+  private readonly collaborationReady: Promise<void>;
+  private collaborationError: string | undefined;
+  private readonly memoryClient: ClaudeMemClient;
+  private readonly transcriptSnapshots = new Map<string, TranscriptSnapshot>();
+  private readonly checkpointTimes = new Map<string, number>();
+  private readonly checkpointing = new Set<string>();
 
   constructor(
     private readonly memento: vscode.Memento,
     private readonly post: (message: ToWebview) => void,
     globalMemento?: vscode.Memento,
+    integration?: { storageDir: string; cliPath: string },
   ) {
     this.client = new HerdrClient(resolveSocketPath(config().get<string>('socketPath')));
     this.transcripts = new TranscriptSource(this.client, () => config().get<number>('transcriptLines') ?? 400);
     this.events = new HerdrEvents(this.client);
     this.commands = new Commands(globalMemento ?? memento);
+    this.memoryClient = new ClaudeMemClient(() => ({
+      baseUrl: config().get<string>('claudeMemUrl'),
+      settingsPath: config().get<string>('claudeMemSettingsPath'),
+    }));
+    this.collaboration = new CollaborationService({
+      storageDir: integration?.storageDir ?? path.join(os.homedir(), '.herdr-chat', 'collaboration'),
+      cliPath: integration?.cliPath ?? path.join(__dirname, 'herdr-collab.cjs'),
+      nodeCommand: config().get<string>('collaborationNodePath') || 'node',
+      host: {
+        listPanes: () => this.livePanes(),
+        listPresets: () => this.presets().filter((preset) => preset.kind).map((preset) => ({
+          id: preset.id, label: preset.label, kind: preset.kind!, models: preset.models, efforts: preset.efforts,
+        })),
+        prompt: (paneId, text, options) => this.client.request('agent.prompt', {
+          target: paneId, text,
+          ...(options?.wait ? { wait: { until: ['idle', 'done', 'blocked'], timeout_ms: options.timeoutMs } } : {}),
+        }, options?.wait ? options.timeoutMs + 5000 : 15000),
+        createAgent: (presetId, tabId, model, effort) => this.createCollaborationAgent(presetId, tabId, model, effort),
+        pausePlanner: async (paneId) => {
+          await this.client.request('agent.send_keys', { target: paneId, keys: ['esc'] });
+        },
+        captureCheckpoint: (task) => this.captureCheckpoint(task),
+        publish: (tasks) => this.publishCollaboration(tasks),
+      },
+    });
+    this.collaborationReady = this.collaboration.initialize().catch((error) => {
+      this.collaborationError = describe(error);
+    });
     this.events.on('change', () => this.scheduleRefresh(150));
     this.events.on('connected', () => this.scheduleRefresh(0));
     this.events.on('disconnected', () => this.scheduleRefresh(0));
@@ -97,6 +154,7 @@ export class Controller implements vscode.Disposable {
     clearTimeout(this.refreshTimer);
     clearInterval(this.pollTimer);
     this.events.dispose();
+    void this.collaboration.dispose().catch(() => undefined);
     this.disposables.forEach((item) => item.dispose());
   }
 
@@ -206,6 +264,17 @@ export class Controller implements vscode.Disposable {
         this.snapshot.panes.filter((pane) => pane.workspace_id === state.workspaceId).map((pane) => pane.pane_id),
       );
       this.publish(state);
+      await this.collaborationReady;
+      if (!this.collaborationError) {
+        const liveTabs = new Map(this.snapshot.tabs.map((tab) => [tab.tab_id, tab]));
+        for (const task of this.collaboration.getTasks()) {
+          if (task.status !== 'archived' && !liveTabs.has(task.tabId)) await this.collaboration.archiveTask(task.tabId);
+          const label = liveTabs.get(task.tabId)?.label;
+          if (task.status !== 'archived' && label && label !== task.title) await this.collaboration.updateTaskTitle(task.id, label);
+        }
+        this.publishCollaboration();
+        this.scheduleCheckpoints();
+      }
       this.drainQueues();
       if (this.openPaneId) await this.pushTranscript();
     } catch (error) {
@@ -216,6 +285,207 @@ export class Controller implements vscode.Disposable {
   private publish(state: ProjectState): void {
     this.state = state;
     this.post({ type: 'state', state });
+  }
+
+  private publishCollaboration(tasks = this.collaboration.getTasks()): void {
+    this.post({ type: 'collaborationState', tasks: tasks.filter((task) => this.gitRoot && samePath(task.repositoryRoot, this.gitRoot)) });
+  }
+
+  private async livePanes(): Promise<LivePane[]> {
+    const snapshot = await this.client.snapshot();
+    const agents = new Map(snapshot.agents.map((agent) => [agent.pane_id, agent]));
+    return snapshot.panes.map((pane) => ({ ...pane, ...agents.get(pane.pane_id) }));
+  }
+
+  /** Bind every action before its first await; selecting another worktree cannot retarget it. */
+  async openTask(tabId: string): Promise<CollaborationTask> {
+    const tab = this.state?.tabs.find((item) => item.tabId === tabId);
+    const repositoryRoot = this.gitRoot;
+    const workspaceId = this.snapshot?.tabs.find((item) => item.tab_id === tabId)?.workspace_id ?? (tab ? this.state?.workspaceId : undefined);
+    const checkoutPath = repositoryRoot ? (
+      this.worktrees?.worktrees.find((tree) => workspaceId && tree.open_workspace_id === workspaceId)?.path
+      ?? this.state?.worktrees.find((tree) => workspaceId && tree.workspaceId === workspaceId)?.path
+      ?? this.state?.worktrees.find((tree) => tree.current)?.path
+      ?? this.selectedWorktreePath()
+    ) : undefined;
+    await this.collaborationReady;
+    if (this.collaborationError) throw new Error(`協作紀錄無法啟動：${this.collaborationError}`);
+    const existing = this.collaboration.getTaskForTab(tabId)
+      ?? this.collaboration.getTasks().find((task) => task.tabId === tabId && task.status === 'archived');
+    if (existing) {
+      if (!repositoryRoot || !samePath(existing.repositoryRoot, repositoryRoot)) throw new Error('這個問題不屬於目前專案。');
+      this.publishCollaboration();
+      if (tab && existing.status !== 'archived' && existing.title !== tab.label) return this.collaboration.updateTaskTitle(existing.id, tab.label);
+      return existing;
+    }
+    if (!tab || !repositoryRoot || !checkoutPath) throw new Error('找不到目前問題，請重新整理。');
+    const agents = tab.agents.filter((agent) => agent.status !== 'shell' && agent.kind);
+    const planner = agents.find((agent) => agent.presetId === 'claude') ?? agents[0];
+    if (!planner) throw new Error('請先在這個問題中啟動一個 agent。');
+    return this.collaboration.ensureTask({ tabId, title: tab.label, repositoryRoot, checkoutPath, plannerPaneId: planner.paneId });
+  }
+
+  async prepareHandoff(tabId: string): Promise<string> {
+    const task = await this.openTask(tabId);
+    const prepared = await this.collaboration.prepareCheckpoint(task.id);
+    return prepared.checkpoint?.text ?? '';
+  }
+
+  async requestHandoff(tabId: string, target: { paneId: string } | { presetId: string }): Promise<void> {
+    const task = await this.openTask(tabId);
+    if (task.status === 'archived') throw new Error('這個問題已封存，請先在 Herdr 開啟工作中的問題。');
+    await this.collaboration.beginHandoff(task.id, 'paneId' in target ? { targetPaneId: target.paneId } : { presetId: target.presetId });
+  }
+
+  async assignPlanner(tabId: string, paneId: string): Promise<void> {
+    const task = await this.openTask(tabId);
+    await this.collaboration.setPlannerFromUser(task.id, paneId);
+    await this.collaboration.enablePlanner(task.id);
+  }
+
+  async copyCollaborationPrompt(tabId: string): Promise<void> {
+    const task = await this.openTask(tabId);
+    await vscode.env.clipboard.writeText(this.collaboration.getCollaborationPrompt(task.id));
+    void vscode.window.showInformationMessage('已複製這個問題的協作指令，可貼給規劃者。');
+  }
+
+  async delegateTask(tabId: string, target: { paneId: string } | { presetId: string }, text: string): Promise<void> {
+    if (!text.trim()) throw new Error('請輸入派工內容。');
+    const task = await this.openTask(tabId);
+    const paneId = 'paneId' in target ? target.paneId : await this.createCollaborationAgent(target.presetId, task.tabId);
+    await this.collaboration.delegateFromUser(task.id, paneId, text.trim());
+  }
+
+  async answerTaskRequest(tabId: string, requestId: string, text: string): Promise<void> {
+    const task = await this.openTask(tabId);
+    await this.collaboration.answerFromUser(task.id, requestId, text);
+  }
+
+  async saveTaskMemory(message: Extract<FromWebview, { type: 'saveTaskMemory' }>): Promise<number> {
+    const task = await this.openTask(message.tabId);
+    if (task.status === 'archived') throw new Error('這個問題已封存，記憶僅供閱讀。');
+    if (message.text.length > 200_000 || message.title.length > 500) throw new Error('記憶內容過長，請選取要保留的段落。');
+    if (message.source) {
+      const source = message.source;
+      const cached = this.transcriptSnapshots.get(source.paneId);
+      const live = (await this.livePanes()).find((pane) => pane.pane_id === source.paneId && pane.tab_id === task.tabId);
+      if (!live || !cached || !sameIdentity(cached.identity, paneIdentity(live))) throw new Error('記憶來源的 agent/session 已改變，請重新選取來源；草稿仍會保留。');
+      if (!cached.transcript.messages.some((item) => item.role === source.role && item.text === source.text)) {
+        throw new Error('來源訊息已更新，請重新選取來源；編輯中的記憶內容仍會保留。');
+      }
+      await this.collaboration.registerParticipant(task.id, source.paneId);
+    }
+    const saved = await this.memoryClient.save({
+      title: message.title, text: message.text, cwd: task.checkoutPath,
+      metadata: {
+        platformSource: 'herdr',
+        sourceFingerprint: memoryFingerprint(task.id, message.operationId, message.title, message.text),
+        herdr: { taskId: task.id, tabId: task.tabId, source: message.source },
+      },
+    });
+    await this.collaboration.addMemoryReference(task.id, { ...saved, source: message.source });
+    return saved.id;
+  }
+
+  private plannerReadOnly(paneId: string): string | undefined {
+    const pane = this.pane(paneId);
+    if (!pane) return undefined;
+    const task = this.collaboration?.getTaskForTab(pane.tab_id);
+    if (!task) return undefined;
+    if (task.status === 'handoff_pending' && task.planner.paneId === paneId) return '規劃者正在交接，原規劃回合已暫停。';
+    if (task.status === 'handoff_pending' && task.handoffs.some((handoff) => handoff.status === 'awaiting_accept' && handoff.target?.paneId === paneId)) {
+      return '正在等待新規劃者明確接受交接，請先完成接手。';
+    }
+    if (task.planner.paneId !== paneId && task.handoffs.some((handoff) => handoff.status === 'accepted' && handoff.from.paneId === paneId)) {
+      return '這個規劃者已交接，請在現任規劃者的對話中繼續。';
+    }
+    return undefined;
+  }
+
+  private assertPlannerWritable(paneId: string): void {
+    const reason = this.plannerReadOnly(paneId);
+    if (reason) throw Object.assign(new Error(reason), { code: 'planner_read_only' });
+  }
+
+  private refreshQueueCheckpoint(paneId: string): void {
+    const pane = this.pane(paneId);
+    const task = pane && this.collaboration?.getTaskForTab?.(pane.tab_id);
+    if (task && this.collaboration.prepareCheckpoint) void this.collaboration.prepareCheckpoint(task.id).catch(() => undefined);
+  }
+
+  private async recordDeliveredMessage(taskId: string | undefined, paneId: string, text: string): Promise<void> {
+    if (!taskId || !text.trim()) return;
+    try { await this.collaboration.recordUserMessage(taskId, paneId, text); }
+    catch (error) { this.post({ type: 'error', text: `訊息已送出，但協作紀錄無法保存；請勿重送同一訊息。${describe(error)}` }); }
+  }
+
+  /** Independent from selected pane: keep usable evidence before the old planner becomes unavailable. */
+  private scheduleCheckpoints(): void {
+    const now = Date.now();
+    for (const task of this.collaboration.getTasks()) {
+      if (!this.gitRoot || !samePath(task.repositoryRoot, this.gitRoot) || task.status !== 'active') continue;
+      if (this.checkpointing.has(task.id) || now - (this.checkpointTimes.get(task.id) ?? 0) < 30_000) continue;
+      this.checkpointTimes.set(task.id, now);
+      this.checkpointing.add(task.id);
+      void this.collaboration.prepareCheckpoint(task.id).catch(() => undefined).finally(() => this.checkpointing.delete(task.id));
+    }
+  }
+
+  private async captureCheckpoint(task: CollaborationTask): Promise<string> {
+    const lines = [`工作目錄：${task.checkoutPath}`, `資料擷取時間：${new Date().toISOString()}`];
+    try {
+      const [branch, commit, status] = await Promise.all([
+        run('git', ['-C', task.checkoutPath, 'branch', '--show-current'], { timeout: 5000 }),
+        run('git', ['-C', task.checkoutPath, 'rev-parse', 'HEAD'], { timeout: 5000 }),
+        run('git', ['-C', task.checkoutPath, 'status', '--short'], { timeout: 5000 }),
+      ]);
+      lines.push(`分支：${branch.stdout.trim() || '(detached)'}`, `Commit：${commit.stdout.trim()}`, `當下檔案狀態（worker 仍可能修改）：\n${status.stdout.trim() || '乾淨'}`);
+    } catch { lines.push('目前無法取得 Git 狀態，接手後請核對工作目錄。'); }
+    const live = await this.livePanes().catch(() => []);
+    for (const participant of task.participants) {
+      const pane = live.find((item) => item.pane_id === participant.paneId);
+      const sameSession = pane && sameIdentity(participant, paneIdentity(pane));
+      const cached = this.transcriptSnapshots.get(participant.paneId);
+      let transcript = cached && sameIdentity(participant, cached.identity) ? cached.transcript : undefined;
+      if (pane && sameSession) {
+        transcript = await this.transcripts.read(pane).catch(() => transcript);
+        if (transcript) this.transcriptSnapshots.set(participant.paneId, { identity: paneIdentity(pane), transcript });
+      }
+      lines.push(`\n## ${participant.name ?? participant.harness} (${participant.paneId})`,
+        `Session：${participant.session?.value ?? '未提供'}；狀態：${sameSession ? pane?.agent_status ?? '未知' : '原 session 已離線'}`);
+      if (transcript) {
+        const firstUser = transcript.messages.find((message) => message.role === 'user');
+        if (firstUser) lines.push(`最早可讀的使用者要求：${firstUser.text.slice(0, 8000)}`);
+        for (const message of transcript.messages.slice(-24)) lines.push(`[${message.role}${message.tool ? `:${message.tool}` : ''}] ${message.text.slice(0, 4000)}`);
+      } else lines.push('原生對話目前不可讀，請參考已保存的目標、派工與回報。');
+      const queue = sameSession ? this.queues.get(participant.paneId) ?? [] : [];
+      if (queue.length) lines.push('尚未送出的使用者要求：', ...queue.map((item) => item.text));
+    }
+    if (task.memoryReferences.length) lines.push('\n## 本問題已保存的記憶', ...task.memoryReferences.map((memory) => `#${memory.id} ${memory.title ?? ''}\n${memory.text ?? '(可依 ID 從 Claude-mem 讀取)'}`));
+    const text = lines.join('\n');
+    return text.length > 100_000 ? `${text.slice(0, 100_000)}\n[Checkpoint 原文已截短；請回原 pane 或原生紀錄核對更早內容。]` : text;
+  }
+
+  /** Spawn against the captured tab, never the worktree currently selected in the UI. */
+  private async createCollaborationAgent(presetId: string, tabId: string, model?: string, effort?: string): Promise<string> {
+    const task = this.collaboration.getTaskForTab(tabId);
+    if (!task || task.status === 'archived') throw new Error('找不到可建立協作者的問題。');
+    const preset = this.presets().find((item) => item.id === presetId);
+    if (!preset?.kind) throw new Error('自動協作需要 Herdr 能識別的 agent kind；自訂 shell 指令請先手動啟動並確認識別。');
+    const live = await this.livePanes();
+    const anchor = live.find((pane) => pane.tab_id === tabId && pane.pane_id === task.planner.paneId)
+      ?? live.find((pane) => pane.tab_id === tabId);
+    if (!anchor) throw new Error('原問題的 tab 已關閉，無法在其他 tab 代為建立。');
+    const split = await this.client.request<any>('pane.split', { target_pane_id: anchor.pane_id, direction: 'right', cwd: task.checkoutPath, focus: false });
+    const paneId: string = split.pane.pane_id;
+    const chosenModel = model || preset.defaultModel, chosenEffort = effort || preset.defaultEffort;
+    await this.rememberPane(paneId, { presetId, model: chosenModel, effort: chosenEffort });
+    await this.startWithRetry({
+      name: agentName(presetId, live.map((pane) => pane.name ?? '').filter(Boolean)), kind: preset.kind, pane_id: paneId,
+      args: buildStartArgs(preset, chosenModel, chosenEffort), timeout_ms: 60000,
+    });
+    this.scheduleRefresh(0);
+    return paneId;
   }
 
   private selectedWorktreePath(): string {
@@ -319,6 +589,11 @@ export class Controller implements vscode.Disposable {
       if (this.screenPanes.has(paneId) || dialog.length || pane.agent_status === 'blocked') transcript.screen = screen;
     }
     transcript.queue = (this.queues.get(paneId) ?? []).map(({ id, text, attachments }) => ({ id, text, attachments }));
+    this.transcriptSnapshots.set(paneId, { identity: paneIdentity(pane), transcript });
+    const task = this.collaboration?.getTaskForTab?.(pane.tab_id);
+    if (task && pane.agent_session?.value && !task.participants.some((participant) => sameIdentity(participant, paneIdentity(pane)))) {
+      void this.collaboration.registerParticipant(task.id, paneId).catch(() => undefined);
+    }
     if (this.openPaneId === paneId) this.post({ type: 'transcript', transcript });
   }
 
@@ -486,6 +761,10 @@ export class Controller implements vscode.Disposable {
   ): Promise<void> {
     const pane = this.pane(paneId);
     if (!pane) throw new Error('這個 pane 已經關閉。');
+    this.assertPlannerWritable(paneId);
+    // Pending/edited/cancelled messages remain queue state; only delivered text becomes a user request.
+    const task = await this.openTask(pane.tab_id).catch(() => undefined);
+    this.assertPlannerWritable(paneId);
     const message: QueuedMessage = {
       id: this.nextQueueId++,
       text,
@@ -496,7 +775,9 @@ export class Controller implements vscode.Disposable {
     const busy = pane.agent_status === 'working' || pane.agent_status === 'blocked';
     // agent 停在提問畫面（例如選了「Type something.」）時，把文字直接打進畫面上的輸入欄。
     if (options.mode === 'now' && parseDialog(await this.readScreen(paneId).catch(() => '')).length) {
+      this.assertPlannerWritable(paneId);
       await this.client.request('pane.send_input', { pane_id: paneId, text, keys: ['enter'] });
+      await this.recordDeliveredMessage(task?.id, paneId, text);
       this.scheduleRefresh(300);
       return;
     }
@@ -504,6 +785,7 @@ export class Controller implements vscode.Disposable {
     if (options.mode !== 'now' && (busy || queue.length || this.delivering.has(paneId))) {
       queue.push(message);
       this.queues.set(paneId, queue);
+      this.refreshQueueCheckpoint(paneId);
       await this.pushTranscript();
       return;
     }
@@ -520,22 +802,34 @@ export class Controller implements vscode.Disposable {
     const next = text.trim();
     if (!next && !item.attachments.length) throw new Error('請輸入訊息，或保留至少一個附件。');
     item.text = next;
+    this.refreshQueueCheckpoint(paneId);
     await this.pushTranscript();
   }
 
   removeQueued(paneId: string, id: number): void {
     const queue = this.queues.get(paneId) ?? [];
     this.queues.set(paneId, queue.filter((item) => item.id !== id));
+    this.refreshQueueCheckpoint(paneId);
     void this.pushTranscript();
   }
 
   /** 把佇列中的訊息立刻送出（插入正在進行的回合）。 */
   async insertQueued(paneId: string, id: number): Promise<void> {
+    this.assertPlannerWritable(paneId);
     const queue = this.queues.get(paneId) ?? [];
     const item = queue.find((entry) => entry.id === id);
     if (!item) return;
     this.queues.set(paneId, queue.filter((entry) => entry.id !== id));
-    await this.deliver(paneId, { ...item, model: undefined, effort: undefined });
+    try {
+      await this.deliver(paneId, { ...item, model: undefined, effort: undefined });
+    } catch (error) {
+      // Only a locally rejected, definitely unsent message is restored; a transport timeout must not replay it.
+      if ((error as { code?: string }).code === 'planner_read_only') {
+        const remaining = this.queues.get(paneId) ?? [];
+        this.queues.set(paneId, [...remaining, item].sort((a, b) => a.id - b.id));
+      }
+      throw error;
+    }
   }
 
   /** agent 回到空閒時送出佇列的第一則。 */
@@ -547,16 +841,19 @@ export class Controller implements vscode.Disposable {
         this.queues.delete(paneId);
         continue;
       }
+      if (this.plannerReadOnly(paneId)) continue;
       if (pane.agent && pane.agent_status !== 'idle' && pane.agent_status !== 'done') continue;
       const item = queue.shift()!;
-      void this.deliver(paneId, item).catch((error) => this.post({ type: 'error', text: describe(error) }));
+      void this.deliver(paneId, item).catch((error) => {
+        if ((error as { code?: string }).code === 'planner_read_only') (this.queues.get(paneId) ?? queue).unshift(item);
+        this.post({ type: 'error', text: describe(error) });
+      });
     }
   }
 
   /** 把附加檔案轉成 agent 認得的引用：專案內用相對路徑，前面加 @。 */
-  private withAttachments(text: string, attachments: string[]): string {
+  private withAttachments(text: string, attachments: string[], root = this.selectedWorktreePath()): string {
     if (!attachments.length) return text;
-    const root = this.selectedWorktreePath();
     const refs = attachments.map((file) => {
       const relative = path.relative(root, file);
       const shown = relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : file;
@@ -566,9 +863,12 @@ export class Controller implements vscode.Disposable {
   }
 
   private async deliver(paneId: string, item: QueuedMessage): Promise<void> {
+    this.assertPlannerWritable(paneId);
+    const pane = this.pane(paneId);
+    const root = pane && this.collaboration?.getTaskForTab(pane.tab_id)?.checkoutPath;
     this.delivering.add(paneId);
     try {
-      await this.deliverNow(paneId, this.withAttachments(item.text, item.attachments), item.model, item.effort);
+      await this.deliverNow(paneId, this.withAttachments(item.text, item.attachments, root ?? pane?.foreground_cwd ?? pane?.cwd), item.model, item.effort);
     } finally {
       this.delivering.delete(paneId);
       this.scheduleRefresh(300);
@@ -576,8 +876,10 @@ export class Controller implements vscode.Disposable {
   }
 
   private async deliverNow(paneId: string, text: string, model?: string, effort?: string): Promise<void> {
+    this.assertPlannerWritable(paneId);
     const pane = this.pane(paneId);
     if (!pane) throw new Error('這個 pane 已經關閉。');
+    const task = this.collaboration?.getTaskForTab(pane.tab_id);
     const memory = this.paneMemory()[paneId];
     const preset =
       this.presets().find((item) => item.id === memory?.presetId) ?? presetForKind(this.presets(), pane.agent);
@@ -586,6 +888,7 @@ export class Controller implements vscode.Disposable {
     if (!pane.agent) {
       // herdr 沒有辨識出 agent（例如自訂指令），直接把文字送進終端機。
       await this.client.request('pane.send_input', { pane_id: paneId, text, keys: ['enter'] });
+      await this.recordDeliveredMessage(task?.id, paneId, text);
       return;
     }
     if (preset?.switchStyle === 'codex-menu' && (model || effort)) {
@@ -613,12 +916,15 @@ export class Controller implements vscode.Disposable {
       }
     }
     if (next.presetId) await this.rememberPane(paneId, next);
+    this.assertPlannerWritable(paneId);
     await this.client.request('agent.prompt', { target: paneId, text });
+    await this.recordDeliveredMessage(task?.id, paneId, text);
     this.scheduleRefresh(300);
   }
 
   /** 送出斜線指令並等待 agent 回到可輸入狀態。 */
   private async prompt(paneId: string, text: string): Promise<void> {
+    this.assertPlannerWritable(paneId);
     await this.client.request('agent.prompt', { target: paneId, text });
     await this.client
       .request('agent.wait', { target: paneId, until: ['idle', 'done', 'blocked'], timeout_ms: 8000 }, 10000)
@@ -721,6 +1027,8 @@ export class Controller implements vscode.Disposable {
     const choice = await vscode.window.showWarningMessage(`關閉對話「${tab?.label ?? tabId}」？`, { modal: true, detail }, '關閉');
     if (choice !== '關閉') return;
     await this.client.request('tab.close', { tab_id: tabId });
+    await this.collaborationReady;
+    if (!this.collaborationError) await this.collaboration.archiveTask(tabId);
     await this.refresh();
   }
 

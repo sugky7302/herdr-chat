@@ -49,6 +49,7 @@ export function toPresetView(preset: AgentPreset): PresetView {
     defaultEffort: preset.defaultEffort,
     canSwitchModel: Boolean(preset.switchModel) || preset.switchStyle === 'codex-menu',
     canSwitchEffort: Boolean(preset.switchEffort) || preset.switchStyle === 'codex-menu',
+    canAutomate: Boolean(preset.kind),
   };
 }
 

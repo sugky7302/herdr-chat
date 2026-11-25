@@ -21,6 +21,14 @@ const contexts = await Promise.all([
     format: 'iife',
     target: 'es2022',
   }),
+  esbuild.context({
+    ...common,
+    entryPoints: ['src/collaboration/cli.ts'],
+    outfile: 'dist/herdr-collab.cjs',
+    platform: 'node',
+    format: 'cjs',
+    target: 'node20',
+  }),
 ]);
 
 if (watch) {

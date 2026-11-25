@@ -122,7 +122,8 @@ export class TranscriptSource {
     const files = await recentCodexFiles();
     if (session?.kind === 'id') {
       const match = files.find((file) => file.includes(session.value));
-      if (match) return match;
+      // A known session must never fall back to another agent's transcript in the same checkout.
+      return match ?? null;
     }
     // 沒有 session id 時，用工作目錄找最近更新的紀錄。
     // 同一目錄同時有多個 Codex 時可能配錯，所以記住第一次的結果。

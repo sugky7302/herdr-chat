@@ -8,6 +8,7 @@ import type {
   ToWebview,
 } from '../src/shared';
 import { ChatView, type Draft } from './chat';
+import { TaskView, type TaskUiState } from './task';
 
 declare function acquireVsCodeApi(): {
   postMessage(message: FromWebview): void;
@@ -20,6 +21,7 @@ const vscode = acquireVsCodeApi();
 type Route =
   | { view: 'history' }
   | { view: 'tab'; tabId: string }
+  | { view: 'archivedTask'; tabId: string }
   | { view: 'pane'; paneId: string }
   | { view: 'newAgent'; tabId: string | null };
 
@@ -30,6 +32,11 @@ let busyText: string | null = null;
 let errorText: string | null = null;
 let creatingWorktree = false;
 const drafts: Record<string, Draft> = saved.drafts ?? {};
+const taskUi: TaskUiState = {
+  pages: saved.taskUi?.pages ?? {},
+  selectedPanes: saved.taskUi?.selectedPanes ?? {},
+  memoryDrafts: saved.taskUi?.memoryDrafts ?? {},
+};
 let newAgentChoice: { presetId?: string; model?: string; effort?: string; saveAsDefault?: boolean } = {};
 
 const app = document.getElementById('app')!;
@@ -40,14 +47,14 @@ function send(message: FromWebview): void {
 }
 
 function persist(): void {
-  vscode.setState({ route, drafts });
+  vscode.setState({ route, drafts, taskUi });
 }
 
 function go(next: Route): void {
   route = next;
   errorText = null;
   persist();
-  send({ type: 'openPane', paneId: next.view === 'pane' ? next.paneId : null });
+  if (next.view !== 'pane' && next.view !== 'tab') send({ type: 'openPane', paneId: null });
   render();
 }
 
@@ -64,7 +71,14 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
       break;
     }
     case 'transcript':
-      if (route?.view === 'pane' && route.paneId === message.transcript.paneId) chat.setTranscript(message.transcript);
+      if (taskView.acceptsTranscript(message.transcript.paneId)) chat.setTranscript(message.transcript);
+      break;
+    case 'collaborationState':
+      taskView.setTasks(message.tasks);
+      render();
+      break;
+    case 'taskOperation':
+      taskView.finishOperation(message);
       break;
     case 'queuedUpdated':
       chat.finishQueueEdit(message.paneId, message.id, message.error);
@@ -126,7 +140,7 @@ function findAgent(paneId: string): { tab: TabView; agent: AgentView } | undefin
 }
 
 function currentTabId(): string | null {
-  if (route?.view === 'tab') return route.tabId;
+  if (route?.view === 'tab' || route?.view === 'archivedTask') return route.tabId;
   if (route?.view === 'pane') return findAgent(route.paneId)?.tab.tabId ?? null;
   return null;
 }
@@ -167,7 +181,7 @@ function statusDot(status: string): HTMLElement {
   const labels: Record<string, string> = {
     working: '執行中',
     blocked: '等待你回應',
-    done: '已完成',
+    done: '原生回合結束',
     idle: '閒置',
     unknown: '狀態不明',
     shell: '終端機',
@@ -202,11 +216,12 @@ function render(): void {
   const focusedId = active?.id;
   const selection =
     active && 'selectionStart' in active && active.selectionStart != null ? [active.selectionStart, active.selectionEnd ?? 0] : null;
-  const pane = app.querySelector<HTMLElement>('main.pane');
-  if (route?.view === 'pane' && pane?.dataset.paneId === route.paneId) {
+  const task = app.querySelector<HTMLElement>('main.task');
+  const tabId = currentTabId();
+  const tab = tabId ? findTab(tabId) ?? taskView.archivedTab(tabId) : undefined;
+  if (tab && task?.dataset.tabId === tabId && (route?.view === 'pane' || route?.view === 'tab' || route?.view === 'archivedTask')) {
     app.firstElementChild?.replaceWith(renderHeader());
-    pane.querySelector('.toolbar')?.replaceWith(renderPaneToolbar(route.paneId));
-    chat.refresh();
+    taskView.refresh(tab, route.view === 'pane' ? route.paneId : undefined);
     app.querySelector(':scope > .busy')?.remove();
     app.querySelector(':scope > .error')?.remove();
   } else {
@@ -310,6 +325,10 @@ function renderMain(): HTMLElement {
       return renderTab(route.tabId);
     case 'pane':
       return renderPane(route.paneId);
+    case 'archivedTask': {
+      const tab = taskView.archivedTab(route.tabId);
+      return tab ? taskView.mount(tab) : h('main', {}, toolbar('封存紀錄', { view: 'history' }), h('p', { class: 'muted pad' }, '正在讀取這個問題的紀錄…'));
+    }
     case 'newAgent':
       return renderNewAgent(route.tabId);
     default:
@@ -362,13 +381,14 @@ function tabTitle(tab: TabView): string {
 
 function renderHistory(): HTMLElement {
   const tabs = state!.tabs;
+  const archives = taskView.archivedTasks();
   return h(
     'main',
     {},
     toolbar(
-      `對話紀錄（${state!.workspaceLabel ?? ''}）`,
+      `歷史紀錄（${state!.workspaceLabel ?? ''}）`,
       null,
-      h('button', { class: 'secondary small', onclick: () => send({ type: 'newTab' }) }, '＋ 新對話'),
+      h('button', { class: 'secondary small', onclick: () => send({ type: 'newTab' }) }, '＋ 新問題'),
     ),
     tabs.length
       ? h(
@@ -404,45 +424,17 @@ function renderHistory(): HTMLElement {
             ),
           ),
         )
-      : h('p', { class: 'muted pad' }, '這個 workspace 還沒有對話。'),
+      : h('p', { class: 'muted pad' }, '這個 workspace 還沒有進行中的問題。'),
+    archives.length ? h('h3', { class: 'task-section-label pad' }, '已封存的問題') : null,
+    archives.length ? h('ul', { class: 'list task-archive-list' }, ...archives.map((task) => h('li', {}, h('button', {
+      class: 'row', 'data-archive-tab': task.tabId, onclick: () => go({ view: 'archivedTask', tabId: task.tabId }),
+    }, h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, task.title), h('span', { class: 'row-sub' }, `${task.requests.length} 項派工 · ${task.memoryReferences.length} 則記憶 · 唯讀`)))))) : null,
   );
 }
 
 function renderTab(tabId: string): HTMLElement {
   const tab = findTab(tabId)!;
-  return h(
-    'main',
-    {},
-    toolbar(
-      tabTitle(tab),
-      { view: 'history' },
-      h('button', { class: 'icon-button', title: '重新命名對話', 'aria-label': '重新命名對話', onclick: () => send({ type: 'renameTab', tabId }) }, icon('edit')),
-      h('button', { class: 'secondary small', onclick: () => go({ view: 'newAgent', tabId }) }, '＋ pane'),
-    ),
-    h(
-      'ul',
-      { class: 'list' },
-      ...tab.agents.map((agent) =>
-        rowItem(
-          h(
-            'button',
-            { class: `row ${agent.focused ? 'active' : ''}`, onclick: () => { chat.clearTranscript(); go({ view: 'pane', paneId: agent.paneId }); } },
-            statusDot(agent.status),
-            h(
-              'span',
-              { class: 'row-text' },
-              h('span', { class: 'row-title' }, agentTitle(agent)),
-              h('span', { class: 'row-sub' }, [agent.kind, agent.title].filter(Boolean).join(' · ') || agent.paneId),
-            ),
-          ),
-          [
-            { icon: 'edit', label: '重新命名', run: () => send({ type: 'renamePane', paneId: agent.paneId }) },
-            { icon: 'trash', label: '關閉 pane', run: () => send({ type: 'closePane', paneId: agent.paneId }) },
-          ],
-        ),
-      ),
-    ),
-  );
+  return taskView.mount(tab);
 }
 
 const SHELL_PRESET: PresetView = {
@@ -548,7 +540,7 @@ function renderNewAgent(tabId: string | null): HTMLElement {
 
 // ---------- 對話頁 ----------
 
-const chat = new ChatView({
+const chat: ChatView = new ChatView({
   send,
   persist,
   h,
@@ -556,16 +548,27 @@ const chat = new ChatView({
   agent: (paneId) => findAgent(paneId)?.agent,
   preset: presetFor,
   drafts,
+  saveMemory: (paneId, message, messageIndex, selectedText) => taskView.openMemory(paneId, message, messageIndex, selectedText),
+  readOnly: (paneId) => taskView.readOnlyReason(paneId),
 });
+
+const taskView: TaskView = new TaskView({
+  h, icon, send, persist, chat,
+  state: () => state,
+  title: tabTitle,
+  paneToolbar: renderPaneToolbar,
+  openAgent: (paneId) => { if (route?.view !== 'pane' || route.paneId !== paneId) chat.clearTranscript(); go({ view: 'pane', paneId }); },
+  history: () => go({ view: 'history' }),
+  newAgent: (tabId) => go({ view: 'newAgent', tabId }),
+}, taskUi);
 
 function renderPaneToolbar(paneId: string): HTMLElement {
   const found = findAgent(paneId);
   const agent = found?.agent;
-  const back: Route = found ? { view: 'tab', tabId: found.tab.tabId } : { view: 'history' };
   const screenOn = chat.screenOpen.has(paneId);
   return toolbar(
       agent ? agentTitle(agent) : paneId,
-      back,
+      null,
       agent ? statusDot(agent.status) : null,
       h(
         'button',
@@ -584,14 +587,15 @@ function renderPaneToolbar(paneId: string): HTMLElement {
         icon('terminal'),
       ),
       h('button', { class: 'icon-button', title: '重新命名', 'aria-label': '重新命名', onclick: () => send({ type: 'renamePane', paneId }) }, icon('edit')),
+      h('button', { class: 'icon-button', title: '關閉 pane', 'aria-label': '關閉 pane', onclick: () => send({ type: 'closePane', paneId }) }, icon('trash')),
       h('button', { class: 'icon-button', title: '在 herdr 中聚焦此 pane', 'aria-label': '在 herdr 中聚焦此 pane', onclick: () => send({ type: 'focusPaneInHerdr', paneId }) }, icon('focus')),
   );
 }
 
 function renderPane(paneId: string): HTMLElement {
-  return h('main', { class: 'pane', 'data-pane-id': paneId }, renderPaneToolbar(paneId), ...chat.mount(paneId));
+  const found = findAgent(paneId);
+  return found ? taskView.mount(found.tab, paneId) : h('main', { class: 'empty' }, h('span', { class: 'spinner' }), '讀取 agent…');
 }
 
 render();
 send({ type: 'ready' });
-if (route?.view === 'pane') send({ type: 'openPane', paneId: route.paneId });
