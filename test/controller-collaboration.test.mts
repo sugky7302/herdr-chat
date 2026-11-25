@@ -271,3 +271,14 @@ test('handoff checkpoint never attributes the current pane session transcript to
   const checkpoint = await c.captureCheckpoint(task());
   assert.doesNotMatch(checkpoint, /OTHER_SESSION_PRIVATE_TRANSCRIPT/);
 });
+
+test('a disabled preset blocks manual and automatic creation before any pane is changed', async () => {
+  const c = controller();
+  c.presets = () => [{ id: 'claude', label: 'Claude', kind: 'claude', enabled: false }];
+  c.collaboration = { getTaskForTab: () => task() };
+  let mutations = 0;
+  c.client = { request: async () => { mutations++; } };
+  await assert.rejects(c.newAgent('claude', null), /停用|disabled/);
+  await assert.rejects(c.createCollaborationAgent('claude', 'tab-a'), /停用|disabled/);
+  assert.equal(mutations, 0);
+});

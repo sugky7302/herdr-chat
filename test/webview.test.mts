@@ -352,6 +352,19 @@ test('派工只提供可自動協作的 preset，失敗時保留工作內容', a
   } finally { await f.window.happyDOM.close(); }
 });
 
+test('停用的 preset 不提供新建協作 agent，但仍可選擇已存在的閒置 agent', async () => {
+  const f = collaborationFixture();
+  try {
+    f.state.presets[0].enabled = false; f.updateState();
+    f.click('[data-task-page="collaboration"]');
+    const select = f.document.querySelector('[aria-label="派工執行者"]')!;
+    assert.doesNotMatch(select.textContent, /新建 Codex/);
+    assert.match(select.textContent, /Reviewer/);
+    assert.equal(select.querySelector('option[value="preset:codex"]'), null);
+    assert.ok(select.querySelector('option[value="pane:wE:p3"]'));
+  } finally { await f.window.happyDOM.close(); }
+});
+
 test('已關閉問題的歷史仍能讀取協作與記憶，沒有執行操作', async () => {
   const f = collaborationFixture();
   try {

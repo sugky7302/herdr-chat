@@ -4,6 +4,9 @@ import { Controller, describe } from './controller';
 import type { FromWebview, ToWebview } from './shared';
 import * as claudeUsage from './claudeUsage';
 import { createHash } from 'node:crypto';
+import { SettingsService } from './settings/service';
+import { createSettingsHost } from './settings/vscodeHost';
+import type { SettingsSnapshot } from './settings/types';
 
 export function activate(context: vscode.ExtensionContext): void {
   setLocale(vscode.env.language);
@@ -15,6 +18,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('herdr.refresh', () => provider.controller.refresh()),
     vscode.commands.registerCommand('herdr.history', () => provider.post({ type: 'navigate', view: 'history' })),
     vscode.commands.registerCommand('herdr.newAgent', () => provider.post({ type: 'navigate', view: 'newAgent' })),
+    vscode.commands.registerCommand('herdr.settings', () => provider.openSettings()),
     vscode.commands.registerCommand('herdr.enableClaudeUsage', async () => {
       const choice = await vscode.window.showInformationMessage(
         t("Enable Claude usage display?"),
@@ -41,7 +45,10 @@ export function deactivate(): void {}
 
 class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   readonly controller: Controller;
+  private readonly settings: SettingsService;
   private view: vscode.WebviewView | undefined;
+  private webviewReady = false;
+  private settingsRequested = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const workspaceKey = createHash('sha256').update(
@@ -52,6 +59,7 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
       storageDir: vscode.Uri.joinPath(context.globalStorageUri, 'collaboration', workspaceKey).fsPath,
       cliPath: vscode.Uri.joinPath(context.extensionUri, 'dist', 'herdr-collab.cjs').fsPath,
     });
+    this.settings = new SettingsService(createSettingsHost(this.controller));
   }
 
   dispose(): void {
@@ -62,14 +70,24 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
     void this.view?.webview.postMessage(message);
   }
 
+  async openSettings(): Promise<void> {
+    this.settingsRequested = true;
+    await vscode.commands.executeCommand('herdr.chat.focus');
+    if (this.webviewReady && this.settingsRequested) {
+      this.settingsRequested = false;
+      this.post({ type: 'navigate', view: 'settings' });
+    }
+  }
+
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
+    this.webviewReady = false;
     const dist = vscode.Uri.joinPath(this.context.extensionUri, 'dist');
     view.webview.options = { enableScripts: true, localResourceRoots: [dist] };
     view.webview.html = this.html(view.webview, dist);
     view.webview.onDidReceiveMessage((message: FromWebview) => void this.handle(message));
     view.onDidDispose(() => {
-      if (this.view === view) this.view = undefined;
+      if (this.view === view) { this.view = undefined; this.webviewReady = false; }
     });
   }
 
@@ -78,6 +96,13 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
     try {
       switch (message.type) {
         case 'ready':
+          this.webviewReady = true;
+          if (this.settingsRequested) {
+            this.settingsRequested = false;
+            this.post({ type: 'navigate', view: 'settings' });
+          }
+          await c.refresh();
+          break;
         case 'refresh':
           await c.refresh();
           break;
@@ -210,7 +235,32 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
           await this.busy(t("Creating workspace…"), () => c.createWorkspace());
           break;
         case 'openSettings':
-          await vscode.commands.executeCommand('workbench.action.openSettings', 'herdr.agentPresets');
+          this.post({ type: 'navigate', view: 'settings' });
+          break;
+        case 'openVSCodeSettings':
+          await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:arvin.herdr-vscode');
+          break;
+        case 'loadSettings':
+          try {
+            this.post({ type: 'settingsState', requestId: message.requestId, snapshot: await this.settings.load(message.scope) });
+          } catch (error) {
+            this.post({ type: 'settingsState', requestId: message.requestId, error: describe(error) });
+          }
+          break;
+        case 'saveAgentSettings':
+          await this.settingsOperation(message.operationId, async () => ({ snapshot: await this.settings.save(message.scope, message.revision, message.presets) }));
+          break;
+        case 'resetAgentSettings':
+          await this.settingsOperation(message.operationId, async () => ({ snapshot: await this.settings.reset(message.scope, message.revision) }));
+          break;
+        case 'runIntegration':
+          await this.settingsOperation(message.operationId, () => this.settings.runIntegration(message.scope, message.target, message.action));
+          break;
+        case 'openAgentDocs':
+          await vscode.env.openExternal(vscode.Uri.parse(this.settings.docsUrl(message.catalogId)));
+          break;
+        case 'openSkillFile':
+          await vscode.window.showTextDocument(vscode.Uri.file(await this.settings.skillPath(message.skillId)), { preview: false });
           break;
       }
     } catch (error) {
@@ -219,6 +269,15 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
       } else {
         this.post({ type: 'error', text: describe(error) });
       }
+    }
+  }
+
+  private async settingsOperation(operationId: string, work: () => Promise<{ snapshot: SettingsSnapshot; output?: string }>): Promise<void> {
+    try {
+      this.post({ type: 'settingsOperation', operationId, ...await work() });
+      this.controller.scheduleRefresh(0);
+    } catch (error) {
+      this.post({ type: 'settingsOperation', operationId, error: describe(error) });
     }
   }
 

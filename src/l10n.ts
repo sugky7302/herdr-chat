@@ -1,6 +1,8 @@
 import { hostMessages } from './l10n/host.ts';
 import { serviceMessages } from './l10n/services.ts';
 import { webviewMessages } from './l10n/webview.ts';
+import { settingsHostMessages } from './l10n/settings-host.ts';
+import { settingsWebviewMessages } from './l10n/settings-webview.ts';
 
 /** The English source message is also the fallback when a translation is unavailable. */
 export type SupportedLocale = 'en' | 'zh-tw';
@@ -10,9 +12,9 @@ export interface LocalizedMessage {
   args?: readonly InterpolationValue[];
 }
 
-export const messageCatalogs = { host: hostMessages, services: serviceMessages, webview: webviewMessages };
+export const messageCatalogs = { host: hostMessages, services: serviceMessages, webview: webviewMessages, settingsHost: settingsHostMessages, settingsWebview: settingsWebviewMessages };
 const traditionalChinese: Readonly<Record<string, string>> = {
-  ...hostMessages, ...serviceMessages, ...webviewMessages,
+  ...hostMessages, ...serviceMessages, ...webviewMessages, ...settingsHostMessages, ...settingsWebviewMessages,
 };
 let locale: SupportedLocale = 'en';
 

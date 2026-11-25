@@ -36,7 +36,10 @@ const bundle = await build({
             registerWebviewViewProvider(id, provider) {state().provider = provider; return disposable();},
             async showInformationMessage(...args) {state().notices.push(args); return undefined;}
           };
-          export const commands = {registerCommand(id, handler) {state().commands[id] = handler; return disposable();}};
+          export const commands = {
+            registerCommand(id, handler) {state().commands[id] = handler; return disposable();},
+            async executeCommand(id) {state().focusedCommands.push(id);}
+          };
         ` };
       });
     },
@@ -48,7 +51,7 @@ test('activation reads vscode.env.language before controller setup and passes th
   const globals = globalThis as typeof globalThis & { __herdrLocaleHost?: any };
   try {
     for (const language of ['en', 'zh-tw', 'zh-Hant-HK', 'ja']) {
-      const state: any = { language, notices: [], commands: {} };
+      const state: any = { language, notices: [], commands: {}, focusedCommands: [], posted: [] };
       globals.__herdrLocaleHost = state;
       const uri = (fsPath: string) => ({ fsPath, toString: () => fsPath });
       const context = {
@@ -56,8 +59,18 @@ test('activation reads vscode.env.language before controller setup and passes th
         workspaceState: {}, globalState: {}, subscriptions: [],
       };
       activate(context);
-      const webview: any = { cspSource: 'vscode-test:', asWebviewUri: (value: any) => value.toString(), onDidReceiveMessage() {} };
+      // A palette command must survive opening a webview that has not sent ready yet.
+      await state.commands['herdr.settings']();
+      const webview: any = {
+        cspSource: 'vscode-test:', asWebviewUri: (value: any) => value.toString(),
+        onDidReceiveMessage(handler: any) { state.receive = handler; },
+        postMessage(message: any) { state.posted.push(message); },
+      };
       state.provider.resolveWebviewView({ webview, onDidDispose() {} });
+      assert.deepEqual(state.focusedCommands, ['herdr.chat.focus']);
+      assert.equal(state.posted.length, 0);
+      state.receive({ type: 'ready' });
+      assert.deepEqual(state.posted[0], { type: 'navigate', view: 'settings' });
       const traditional = language.startsWith('zh');
       assert.equal(state.constructedLocale, traditional ? 'zh-tw' : 'en');
       assert.match(webview.html, new RegExp(`<html lang="${traditional ? 'zh-TW' : 'en'}">`));

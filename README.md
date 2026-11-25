@@ -2,7 +2,7 @@
 
 在 VS Code 右側邊欄與 Herdr agent 對話，查看同一個問題的分工、等待、回報與記憶。
 
-**0.4.0：介面會自動跟隨 VS Code 的顯示語言，支援繁體中文與英文。** 一個 tab 就是一個問題，pane 是參與這個問題的 agent。可以讓 Claude 擔任規劃者，建立或呼叫其他 agent；也可以在 Claude 無法繼續時，把規劃工作交接給另一個 agent。
+**0.5.0：右上角新增設定，管理 agent／模型選單、Herdr 整合與本機 Skills。** 介面自動跟隨 VS Code 的顯示語言，支援繁體中文與英文。一個 tab 就是一個問題，pane 是參與這個問題的 agent。可以讓 Claude 擔任規劃者，建立或呼叫其他 agent；也可以在 Claude 無法繼續時，把規劃工作交接給另一個 agent。
 
 ## 顯示語言
 
@@ -150,6 +150,54 @@ checkpoint 使用已保存的目標、要求、派工、回報、記憶，以及
 - **完成與驗收分開：**worker 的 `completed` 是它的明確回報；請依回報的差異、測試與證據驗收實際工作。
 
 ## 設定
+
+右上角的 **齒輪** 或命令選擇區的 **herdr: 設定** 可開啟設定頁。即使 Herdr 未連線或還沒開啟 Git 專案，仍可以編輯使用者 agent 選單、查看 catalog 與本機技能。
+
+### Agent 與模型
+
+- 選擇「使用者」或「工作區」範圍；多資料夾工作區寫入目前專案的資料夾設定。工作區可以繼承使用者選單，也可以另存自己的清單。
+- 啟用／停用、加入、移除 agent preset，設定模型 ID、effort 與預設值。停用選項會從新增 agent、自動派工與新建交接目標中移除；已經運作的 pane 保留。
+- 支援 Herdr 原生 `kind` 或自訂 shell `command`。進階設定可編輯啟動參數、模型參數範本、切換指令等欄位；既有自訂欄位會保留。
+- 顯示 Herdr v0.9.5 支援的 24 種原生 agent catalog。實際啟動能力以你安裝的 Herdr 版本與 agent CLI 為準。加入選單不會安裝 CLI，也不會啟動 agent。
+- 模型 ID 是提供給各 agent 的選項，能否使用取決於供應商、帳號與 agent 設定。新增模型時需要搭配該 agent 支援的 `modelArgs`；catalog 不會替不確定的 CLI 猜測模型參數。
+- `herdr.agentDefaults` 的專案預設值仍優先於 preset 中的預設值；設定頁會顯示提醒，可從進階 VS Code 設定修改。
+- 背景 pane 更新不會重建設定編輯區。儲存前會檢查設定與工作區版本；外部修改或切換工作區後，舊草稿會保留並提示重新整理。
+
+### Herdr 整合的安裝／移除
+
+整合頁透過原生 `integration.list`、`integration.install`、`integration.uninstall` API 檢查與更新 Herdr hooks／plugins。成功後再次查詢狀態；連線、舊版本或結果驗證失敗會顯示錯誤，不會把未知狀態當成已安裝。
+
+**「安裝 Herdr 整合」處理 agent 與 Herdr 的狀態／session 連接。CLI 程式與雲端模型的安裝是不同的動作。** 需要安裝 agent 軟體時，使用 catalog 的官方設定／安裝文件連結。此版本不會代管 npm、Homebrew、原生 installer 的軟體安裝，也不下載或刪除模型權重。
+
+Catalog 與 API target 依 [Herdr v0.9.5 原始碼](https://github.com/herdrdev/herdr/blob/v0.9.5/src/detect/mod.rs) 和 [integration schema](https://github.com/herdrdev/herdr/blob/v0.9.5/src/api/schema/integrations.rs) 核對。此版本 socket API 提供 17 種 integration；Letta 的整合僅有 Herdr CLI 入口，設定頁提供文件，不向 socket 傳送不存在的 target。較舊的 Herdr 缺少 API 時，其他設定仍可使用。
+
+### 本機 Skills
+
+Skills 頁列出標準本機目錄找到的技能，包含 agent、名稱、說明、範圍、路徑與呼叫方式，可重新整理或開啟原始 `SKILL.md`。它不執行技能程式，也不宣稱這些項目都已被正在執行的 agent 載入。
+
+| Agent | 專案目錄 | 使用者目錄 |
+| --- | --- | --- |
+| Claude Code | `.claude/skills` | `$CLAUDE_CONFIG_DIR/skills`，預設 `~/.claude/skills` |
+| Codex | `.agents/skills` | `~/.agents/skills`，以及保留相容的 `$CODEX_HOME/skills`（預設 `~/.codex/skills`） |
+| Antigravity CLI | `.agents/skills` | `~/.gemini/config/skills`、`~/.gemini/antigravity-cli/skills`、`~/.gemini/skills` |
+
+Codex 另掃描 `/etc/codex/skills`。專案來源依目前選取的 checkout；plugin、managed policy、帳號同步、額外目錄或 runtime manifest 可能提供其他技能，實際載入清單請以 agent 本身為準。聊天的 `/` 候選選單補上 Codex 技能，選取後插入原生 `$skill-name`；原有 Claude 自訂 commands 與 Codex prompts 保留。
+
+Herdr 本身提供一個教 agent 操作 pane、啟動協作者與等待回應的技能；載入技能的是各 agent 的 runtime。依 [Herdr 官方技能文件](https://herdr.dev/tui/docs/agent-skill/)，可在自己的環境執行：
+
+```sh
+# 查看目前 Herdr binary 隨附的技能
+herdr --skill
+
+# 安裝到支援的 agent 使用者範圍；省略 -g 則安裝到目前專案
+npx skills add herdrdev/herdr --skill herdr -g
+```
+
+這份原生 Herdr 技能與本擴充功能的「複製協作入口」互補；本擴充功能的 request、明確完成回報與 planner 交接仍使用問題專屬的協作 CLI。
+
+### 進階 VS Code 設定
+
+設定頁提供目前連線、socket 路徑、協作 Node 路徑、Claude-mem 設定位址與工作區信任狀態，並可開啟 VS Code 的完整設定。
 
 | 設定 | 預設值 | 說明 |
 | --- | --- | --- |

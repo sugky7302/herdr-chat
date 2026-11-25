@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { CompletionItem } from './shared';
+import { parseSkillMetadata, scanSkills, type SkillScanOptions } from './skills/discovery.ts';
 import claudeCatalog from './catalog/claude.json';
 import codexCatalog from './catalog/codex.json';
 
@@ -25,7 +26,9 @@ const BUILT_IN: Record<string, CommandEntry[]> = {
 export class Commands {
   private diskCache = new Map<string, { at: number; entries: CommandEntry[] }>();
 
-  constructor(private readonly memento: vscode.Memento) {}
+  constructor(private readonly memento: vscode.Memento, private readonly skillOptions: SkillScanOptions = {}) {}
+
+  clearDiskCache(): void { this.diskCache.clear(); }
 
   async list(kind: string | null, root: string, extra: string[], query: string): Promise<CompletionItem[]> {
     const harvested = this.memento.get<Record<string, CommandEntry[]>>(HARVEST_KEY, {});
@@ -53,6 +56,7 @@ export class Commands {
     kind: string,
     io: { type(text: string): Promise<unknown>; keys(keys: string[]): Promise<unknown>; read(): Promise<string> },
   ): Promise<number> {
+    this.clearDiskCache();
     const found = new Map<string, string>();
     await io.type('/');
     await sleep(800);
@@ -85,23 +89,23 @@ export class Commands {
     const key = `${kind}:${root}`;
     const cached = this.diskCache.get(key);
     if (cached && Date.now() - cached.at < 30000) return cached.entries;
-    const home = os.homedir();
-    let entries: CommandEntry[] = [];
+    const home = this.skillOptions.homeDir ?? os.homedir();
+    const env = this.skillOptions.env ?? process.env;
+    const inventory = await scanSkills(root, { ...this.skillOptions, agents: [kind] });
+    // A Codex skill is inserted as $name, even when selected from this / chooser.
+    // setRangeText replaces the complete trigger/query, preserving its native invocation.
+    let entries: CommandEntry[] = inventory.skills.filter((skill) => skill.invocation)
+      .map((skill) => ({ name: skill.invocation, description: skill.description }));
     if (kind === 'claude') {
       entries = [
+        ...entries,
         ...(await markdownCommands(path.join(root, '.claude', 'commands'), '')),
-        ...(await skills(path.join(root, '.claude', 'skills'))),
-        ...(await markdownCommands(path.join(home, '.claude', 'commands'), '')),
-        ...(await skills(path.join(home, '.claude', 'skills'))),
+        ...(await markdownCommands(path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'commands'), '')),
       ];
     } else if (kind === 'codex') {
-      entries = await markdownCommands(path.join(home, '.codex', 'prompts'), 'prompts:');
-    } else if (kind === 'agy') {
       entries = [
-        ...(await skills(path.join(root, '.github', 'skills'))),
-        ...(await skills(path.join(root, '.agents', 'skills'))),
-        ...(await skills(path.join(home, '.agents', 'skills'))),
-        ...(await skills(path.join(home, '.gemini', 'antigravity-cli', 'builtin', 'skills'))),
+        ...entries,
+        ...(await markdownCommands(path.join(env.CODEX_HOME || path.join(home, '.codex'), 'prompts'), 'prompts:')),
       ];
     }
     this.diskCache.set(key, { at: Date.now(), entries });
@@ -133,22 +137,9 @@ async function markdownCommands(dir: string, prefix: string): Promise<CommandEnt
   return entries;
 }
 
-async function skills(dir: string): Promise<CommandEntry[]> {
-  const entries: CommandEntry[] = [];
-  for (const item of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
-    if (!item.isDirectory() && !item.isSymbolicLink()) continue;
-    const file = path.join(dir, item.name, 'SKILL.md');
-    const description = await frontmatterDescription(file).catch(() => null);
-    if (description !== null) entries.push({ name: `/${item.name}`, description });
-  }
-  return entries;
-}
-
 async function frontmatterDescription(file: string): Promise<string> {
   const text = (await fs.readFile(file, 'utf8')).slice(0, 4000);
-  const match = /^---\n([\s\S]*?)\n---/.exec(text);
-  const line = match?.[1].split('\n').find((row) => row.startsWith('description:'));
-  return line ? line.slice('description:'.length).trim().replace(/^["']|["']$/g, '').slice(0, 200) : '';
+  return parseSkillMetadata(text, path.basename(file, '.md')).description.slice(0, 200);
 }
 
 function sleep(ms: number): Promise<void> {

@@ -111,7 +111,7 @@ export class Controller implements vscode.Disposable {
       nodeCommand: config().get<string>('collaborationNodePath') || 'node',
       host: {
         listPanes: () => this.livePanes(),
-        listPresets: () => this.presets().filter((preset) => preset.kind).map((preset) => ({
+        listPresets: () => this.presets().filter((preset) => preset.kind && preset.enabled !== false).map((preset) => ({
           id: preset.id, label: preset.label, kind: preset.kind!, models: preset.models, efforts: preset.efforts,
         })),
         prompt: (paneId, text, options) => this.client.request('agent.prompt', {
@@ -162,7 +162,7 @@ export class Controller implements vscode.Disposable {
   /** 選項清單。專案設定 herdr.agentDefaults 會覆蓋選項的預設模型與 effort。 */
   presets(): AgentPreset[] {
     const defaults = this.projectConfig().get<Record<string, { model?: string; effort?: string }>>('agentDefaults') ?? {};
-    return normalizePresets(config().get('agentPresets')).map((preset) => {
+    return normalizePresets(this.projectConfig().get('agentPresets')).map((preset) => {
       const local = defaults[preset.id];
       if (!local) return preset;
       return { ...preset, defaultModel: local.model || preset.defaultModel, defaultEffort: local.effort || preset.defaultEffort };
@@ -171,9 +171,18 @@ export class Controller implements vscode.Disposable {
 
   /** 讀取目前專案資料夾範圍的設定，讓 .vscode/settings.json 生效。 */
   private projectConfig(): vscode.WorkspaceConfiguration {
-    const folder = this.gitRoot ? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(this.gitRoot)) : undefined;
-    return vscode.workspace.getConfiguration('herdr', folder?.uri);
+    return vscode.workspace.getConfiguration('herdr', this.settingsWorkspace().resource);
   }
+
+  /** Settings follow VS Code's folder scope; Skills follow the checkout where new agents start. */
+  settingsWorkspace(): { resource?: vscode.Uri; root?: string } {
+    const root = this.gitRoot ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const folder = (root ? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root)) : undefined)
+      ?? vscode.workspace.workspaceFolders?.[0];
+    return { resource: folder?.uri, root: this.gitRoot ? this.selectedWorktreePath() : root };
+  }
+
+  clearCommandCache(): void { this.commands.clearDiskCache(); }
 
   /** 把模型與 effort 存成這個專案的預設值（寫入工作區設定）。 */
   async saveProjectDefault(presetId: string, model?: string, effort?: string): Promise<void> {
@@ -473,6 +482,7 @@ export class Controller implements vscode.Disposable {
     if (!task || task.status === 'archived') throw new Error(t("No active task is available for creating a collaborator."));
     const preset = this.presets().find((item) => item.id === presetId);
     if (!preset?.kind) throw new Error(t("Automatic collaboration requires an agent kind recognized by Herdr. Start custom shell agents manually and confirm that Herdr recognizes them."));
+    if (preset.enabled === false) throw new Error(t('Agent preset {0} is disabled. Enable it in Settings before starting a new agent.', preset.label));
     const live = await this.livePanes();
     const anchor = live.find((pane) => pane.tab_id === tabId && pane.pane_id === task.planner.paneId)
       ?? live.find((pane) => pane.tab_id === tabId);
@@ -676,6 +686,7 @@ export class Controller implements vscode.Disposable {
     }
     const preset = this.presets().find((item) => item.id === presetId);
     if (!preset) throw new Error(t("Preset {0} could not be found.", presetId));
+    if (preset.enabled === false) throw new Error(t('Agent preset {0} is disabled. Enable it in Settings before starting a new agent.', preset.label));
     model ||= preset.defaultModel;
     effort ||= preset.defaultEffort;
     this.requireWorkspace();

@@ -10,6 +10,7 @@ import type {
 } from '../src/shared';
 import { ChatView, type Draft } from './chat';
 import { TaskView, type TaskUiState } from './task';
+import { SettingsView } from './settings';
 
 declare function acquireVsCodeApi(): {
   postMessage(message: FromWebview): void;
@@ -23,6 +24,7 @@ const vscode = acquireVsCodeApi();
 
 type Route =
   | { view: 'history' }
+  | { view: 'settings' }
   | { view: 'tab'; tabId: string }
   | { view: 'archivedTask'; tabId: string }
   | { view: 'pane'; paneId: string }
@@ -54,6 +56,14 @@ function persist(): void {
 }
 
 function go(next: Route): void {
+  if (route?.view === 'settings' && next.view !== 'settings') {
+    settingsView.leave(() => changeRoute(next));
+    return;
+  }
+  changeRoute(next);
+}
+
+function changeRoute(next: Route): void {
   route = next;
   errorText = null;
   persist();
@@ -94,7 +104,12 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
       break;
     case 'navigate':
       if (message.view === 'history') go({ view: 'history' });
+      else if (message.view === 'settings') go({ view: 'settings' });
       else go({ view: 'newAgent', tabId: currentTabId() });
+      break;
+    case 'settingsState':
+    case 'settingsOperation':
+      settingsView.receive(message);
       break;
     case 'openedPane':
       chat.clearTranscript();
@@ -222,7 +237,12 @@ function render(): void {
   const task = app.querySelector<HTMLElement>('main.task');
   const tabId = currentTabId();
   const tab = tabId ? findTab(tabId) ?? taskView.archivedTab(tabId) : undefined;
-  if (tab && task?.dataset.tabId === tabId && (route?.view === 'pane' || route?.view === 'tab' || route?.view === 'archivedTask')) {
+  if (route?.view === 'settings' && app.querySelector('main.settings')) {
+    // Settings owns its editable draft and DOM; agent polling must not disturb typing.
+    app.firstElementChild?.replaceWith(renderHeader());
+    app.querySelector(':scope > .busy')?.remove();
+    app.querySelector(':scope > .error')?.remove();
+  } else if (tab && task?.dataset.tabId === tabId && (route?.view === 'pane' || route?.view === 'tab' || route?.view === 'archivedTask')) {
     app.firstElementChild?.replaceWith(renderHeader());
     taskView.refresh(tab, route.view === 'pane' ? route.paneId : undefined);
     app.querySelector(':scope > .busy')?.remove();
@@ -255,13 +275,14 @@ function renderHeader(): HTMLElement {
           title: t("Switch branch (worktree)"),
           onchange: (event: Event) => {
             const value = (event.target as HTMLSelectElement).value;
-            if (value === '__new__') {
-              creatingWorktree = true;
-              render();
-            } else {
-              send({ type: 'switchWorktree', path: value });
-              route = null;
-            }
+            const change = () => {
+              if (value === '__new__') { creatingWorktree = true; render(); }
+              else { send({ type: 'switchWorktree', path: value }); route = null; }
+            };
+            if (route?.view === 'settings') {
+              (event.target as HTMLSelectElement).value = state!.worktrees.find((tree) => tree.current)?.path ?? '';
+              settingsView.leave(change);
+            } else change();
           },
         },
         ...state.worktrees.map((tree) =>
@@ -306,6 +327,8 @@ function renderHeader(): HTMLElement {
 }
 
 function renderMain(): HTMLElement {
+  // Settings is also the repair/configuration entry point when Herdr is unavailable.
+  if (route?.view === 'settings') return settingsView.mount();
   if (!state) return h('main', { class: 'empty' }, h('span', { class: 'spinner' }));
   if (!state.connected || (state.error && !state.repoRoot)) {
     return h(
@@ -450,7 +473,7 @@ const SHELL_PRESET: PresetView = {
 };
 
 function renderNewAgent(tabId: string | null): HTMLElement {
-  const presets = [...state!.presets, { ...SHELL_PRESET, label: t(SHELL_PRESET.label) }];
+  const presets = [...state!.presets.filter((preset) => preset.enabled !== false), { ...SHELL_PRESET, label: t(SHELL_PRESET.label) }];
   const preset = presets.find((item) => item.id === newAgentChoice.presetId) ?? presets[0];
   if (preset && newAgentChoice.presetId !== preset.id) {
     newAgentChoice = { presetId: preset.id, model: preset.defaultModel, effort: preset.defaultEffort };
@@ -564,6 +587,8 @@ const taskView: TaskView = new TaskView({
   history: () => go({ view: 'history' }),
   newAgent: (tabId) => go({ view: 'newAgent', tabId }),
 }, taskUi);
+
+const settingsView = new SettingsView({ h, icon, send, back: () => go({ view: 'history' }) });
 
 function renderPaneToolbar(paneId: string): HTMLElement {
   const found = findAgent(paneId);

@@ -23,5 +23,8 @@
   "herdr.agentPresets.effortArgs.description": "Startup arguments for effort. {effort} is replaced with the selected effort.",
   "herdr.agentPresets.switchModel.description": "Command sent when switching models during a conversation, for example /model {model}. Leave empty if switching is not supported.",
   "herdr.agentPresets.switchEffort.description": "Command sent when switching effort during a conversation, for example /effort {effort}. Leave empty if switching is not supported.",
-  "herdr.agentPresets.switchStyle.description": "codex-menu switches models through the Codex /model menu, for the current session only."
+  "herdr.agentPresets.switchStyle.description": "codex-menu switches models through the Codex /model menu, for the current session only.",
+  "herdr.settings.title": "herdr: Settings",
+  "herdr.agentPresets.enabled.description": "Include this preset when creating agents, including automatic collaborators. Existing panes are kept.",
+  "herdr.agentPresets.slashCommands.description": "Additional slash commands offered in the agent input menu."
 }

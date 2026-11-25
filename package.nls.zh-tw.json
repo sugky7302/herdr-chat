@@ -23,5 +23,8 @@
   "herdr.agentPresets.effortArgs.description": "啟動時設定 effort 的參數。{effort} 會換成選定的 effort。",
   "herdr.agentPresets.switchModel.description": "對話中切換模型時送出的指令，例如 /model {model}。留空表示不支援對話中切換。",
   "herdr.agentPresets.switchEffort.description": "對話中切換 effort 時送出的指令，例如 /effort {effort}。留空表示不支援對話中切換。",
-  "herdr.agentPresets.switchStyle.description": "codex-menu 表示操作 Codex 的 /model 選單切換（只套用到目前 session）。"
+  "herdr.agentPresets.switchStyle.description": "codex-menu 表示操作 Codex 的 /model 選單切換（只套用到目前 session）。",
+  "herdr.settings.title": "herdr: 設定",
+  "herdr.agentPresets.enabled.description": "建立 agent（包含自動協作者）時提供此選項。既有 pane 會保留。",
+  "herdr.agentPresets.slashCommands.description": "Agent 輸入選單中額外提供的斜線指令。"
 }

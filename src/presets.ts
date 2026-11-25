@@ -3,6 +3,7 @@ import type { PresetView } from './shared';
 export interface AgentPreset {
   id: string;
   label: string;
+  enabled?: boolean;
   kind?: string;
   command?: string;
   args?: string[];
@@ -50,6 +51,7 @@ export function toPresetView(preset: AgentPreset): PresetView {
     canSwitchModel: Boolean(preset.switchModel) || preset.switchStyle === 'codex-menu',
     canSwitchEffort: Boolean(preset.switchEffort) || preset.switchStyle === 'codex-menu',
     canAutomate: Boolean(preset.kind),
+    enabled: preset.enabled !== false,
   };
 }
 

@@ -1,5 +1,7 @@
 // extension 與 webview 共用的訊息格式。
 import type { CollaborationTask } from './collaboration/types';
+import type { AgentPreset } from './presets';
+import type { SettingsScope, SettingsSnapshot } from './settings/types';
 
 export type AgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
 
@@ -14,6 +16,7 @@ export interface PresetView {
   canSwitchEffort: boolean;
   /** 自動啟動與等待需要 Herdr 能識別的 agent kind。 */
   canAutomate?: boolean;
+  enabled?: boolean;
 }
 
 export interface WorktreeView {
@@ -121,7 +124,9 @@ export type ToWebview =
   | { type: 'collaborationState'; tasks: CollaborationTask[] }
   | { type: 'taskOperation'; tabId: string; operationId: string; kind: 'memory' | 'handoff' | 'delegate' | 'planner' | 'checkpoint' | 'answer'; error?: string; memoryId?: number; checkpoint?: string }
   | { type: 'transcript'; transcript: Transcript }
-  | { type: 'navigate'; view: 'history' | 'newAgent' }
+  | { type: 'navigate'; view: 'history' | 'newAgent' | 'settings' }
+  | { type: 'settingsState'; requestId: string; snapshot?: SettingsSnapshot; error?: string }
+  | { type: 'settingsOperation'; operationId: string; snapshot?: SettingsSnapshot; error?: string; output?: string }
   | { type: 'openedPane'; paneId: string }
   | { type: 'completions'; requestId: number; items: CompletionItem[] }
   | { type: 'attachments'; paneId: string; paths: string[] }
@@ -174,4 +179,11 @@ export type FromWebview =
   | { type: 'switchWorktree'; path: string }
   | { type: 'createWorktree'; branch: string }
   | { type: 'createWorkspace' }
+  | { type: 'loadSettings'; requestId: string; scope: SettingsScope }
+  | { type: 'saveAgentSettings'; operationId: string; scope: SettingsScope; revision: string; presets: AgentPreset[] }
+  | { type: 'resetAgentSettings'; operationId: string; scope: SettingsScope; revision: string }
+  | { type: 'runIntegration'; operationId: string; scope: SettingsScope; target: string; action: 'install' | 'uninstall' }
+  | { type: 'openAgentDocs'; catalogId: string }
+  | { type: 'openSkillFile'; skillId: string }
+  | { type: 'openVSCodeSettings' }
   | { type: 'openSettings' };

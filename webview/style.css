@@ -747,3 +747,64 @@ button.task-agent[aria-pressed="true"] { border-color: var(--vscode-focusBorder)
   .task-content > .toolbar h2 { white-space: normal; }
   .task-content .agent-heading { flex-wrap: wrap; gap: 2px 6px; }
 }
+
+/* Settings uses VS Code theme tokens and retains its own form DOM during pane polling. */
+main.settings { min-width: 0; }
+.settings .toolbar { flex: none; }
+.settings-scope { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; }
+.settings-scope > label { color: var(--vscode-descriptionForeground); }
+.settings-nav { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding: 0 8px; flex: none; }
+button.settings-section { flex: 1 1 auto; padding: 8px 7px; border-radius: 0; color: var(--vscode-descriptionForeground); background: transparent; border-bottom: 2px solid transparent; }
+button.settings-section:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
+button.settings-section.selected { color: var(--vscode-foreground); border-bottom-color: var(--vscode-focusBorder); }
+.settings-body { padding: 10px 12px 16px; }
+.settings-body h3 { font-size: 1em; margin: 8px 0; }
+.settings-body p { line-height: 1.5; margin: 6px 0 10px; overflow-wrap: anywhere; }
+.settings-body code, .settings-body pre { font-family: var(--vscode-editor-font-family, monospace); font-size: 0.9em; }
+.settings-body pre, .settings-output pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.settings-path { display: block; overflow-wrap: anywhere; word-break: break-word; }
+.settings-note { padding: 8px; background: var(--vscode-editorWidget-background); border-left: 2px solid var(--border); }
+.settings-note summary, .settings-advanced summary, .settings-roots summary, .settings-output summary { cursor: pointer; }
+.settings-agent-list { display: flex; flex-direction: column; gap: 4px; margin: 12px 0; }
+.settings-agent-row { display: flex; gap: 6px; align-items: center; }
+.settings-agent-row input[type="checkbox"] { flex: none; margin: 0 3px; }
+button.settings-agent-choice { display: flex; flex: 1; min-width: 0; gap: 8px; align-items: baseline; text-align: left; color: var(--vscode-foreground); background: transparent; border: 1px solid var(--border); padding: 7px 8px; }
+button.settings-agent-choice strong { flex: 1; overflow-wrap: anywhere; }
+button.settings-agent-choice code { color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }
+button.settings-agent-choice.selected { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground); }
+button.settings-agent-choice:hover:not(:disabled) { background: var(--vscode-list-hoverBackground); }
+.settings-editor { display: flex; flex-direction: column; gap: 9px; min-width: 0; margin: 10px 0; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+.settings-editor legend { padding: 0 4px; }
+.settings-editor label { display: flex; flex-direction: column; gap: 4px; color: var(--vscode-descriptionForeground); min-width: 0; }
+.settings-editor textarea { width: 100%; min-width: 0; padding: 6px; resize: vertical; }
+.settings-editor > button { align-self: flex-start; }
+.settings-advanced textarea { font-family: var(--vscode-editor-font-family, monospace); font-size: 0.9em; }
+.settings-advanced-error:empty { display: none; }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.settings-catalog { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 8px; margin-top: 8px; }
+.settings-card { display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); margin: 8px 0; }
+.settings-catalog .settings-card { margin: 0; }
+.settings-card > button { align-self: flex-start; }
+.settings-card p { margin: 0; }
+.settings-card-heading { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+.settings-badge { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+.settings-feedback:empty { display: none; }
+.settings-feedback { padding: 0 12px; }
+.settings-inline-error { color: var(--vscode-errorForeground); overflow-wrap: anywhere; }
+.settings-notice { display: flex; align-items: center; gap: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.settings-confirm { padding: 10px; margin: 8px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--vscode-editorWidget-background); }
+.settings-confirm p { margin: 0 0 8px; line-height: 1.5; }
+.settings-save-bar { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border); padding: 9px 12px; background: var(--vscode-sideBar-background); margin-top: auto; }
+.settings-save-bar:empty { display: none; }
+.settings-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.settings-filters input { min-width: 100px; }
+.settings-root { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.settings-herdr-skill { margin-top: 16px; }
+.settings-diagnostics { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 2fr); gap: 10px; line-height: 1.5; }
+.settings-diagnostics dt { color: var(--vscode-descriptionForeground); }
+.settings-diagnostics dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 320px) {
+  .settings-save-bar { flex-direction: column; align-items: stretch; }
+  .settings-diagnostics { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .settings-diagnostics dd { margin-bottom: 8px; }
+}

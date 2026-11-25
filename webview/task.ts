@@ -389,7 +389,7 @@ export class TaskView {
     const plannerId = this.task()?.planner.paneId;
     return [
       ...(this.tab?.agents ?? []).filter((agent) => agent.kind && agent.status === 'idle' && agent.paneId !== plannerId).map((agent) => ({ value: `pane:${agent.paneId}`, label: t("Existing {0} · {1} (idle)", paneName(agent), agent.paneId) })),
-      ...(this.host.state()?.presets ?? []).filter((preset) => preset.canAutomate === true).map((preset) => ({ value: `preset:${preset.id}`, label: t("New {0}", preset.label) })),
+      ...(this.host.state()?.presets ?? []).filter((preset) => preset.canAutomate === true && preset.enabled !== false).map((preset) => ({ value: `preset:${preset.id}`, label: t("New {0}", preset.label) })),
     ];
   }
 
