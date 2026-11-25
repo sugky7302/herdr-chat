@@ -63,6 +63,14 @@ function finish(messages: ChatMessage[], model?: string, effort?: string, usage?
   return { messages: messages.slice(-MAX_MESSAGES), model, effort, usage };
 }
 
+/**
+ * Claude Code 會把貼上的文字包在 <pasted_content id="…"> 標籤裡。
+ * 擴充功能用貼上的方式送出訊息，所以顯示前移除這些標籤。
+ */
+export function stripPasteTags(text: string): string {
+  return text.replace(/<\/?pasted_content(?:\s+id=(?:"[^"]*"|\S+))?\s*>/g, '').trim();
+}
+
 /** 判斷使用者訊息是不是系統自動加入的內容，而不是使用者輸入的文字。 */
 function isInjectedUserText(text: string): boolean {
   const start = text.trimStart();
@@ -106,7 +114,7 @@ export function parseClaude(text: string): ParsedTranscript {
           const effortMatch = /^\/effort\s+(\S+)/.exec(command);
           if (effortMatch) effort = effortMatch[1];
         } else if (!isInjectedUserText(content)) {
-          pushMessage(messages, { role: 'user', text: content });
+          pushMessage(messages, { role: 'user', text: stripPasteTags(content) });
         }
         return;
       }
@@ -115,7 +123,7 @@ export function parseClaude(text: string): ParsedTranscript {
           .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
           .map((part: any) => part.text as string)
           .filter((part: string) => !isInjectedUserText(part));
-        if (texts.length) pushMessage(messages, { role: 'user', text: texts.join('\n\n') });
+        if (texts.length) pushMessage(messages, { role: 'user', text: stripPasteTags(texts.join('\n\n')) });
       }
       return;
     }

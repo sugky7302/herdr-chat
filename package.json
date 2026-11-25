@@ -2,7 +2,7 @@
   "name": "herdr-vscode",
   "displayName": "herdr Agents",
   "description": "在 VS Code 右側邊欄顯示 herdr 在目前專案的 workspace、tab、agent 與對話。",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "arvin",
   "private": true,
   "license": "UNLICENSED",

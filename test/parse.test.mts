@@ -66,3 +66,14 @@ test('Claude 專案資料夾名稱把非英數字元換成 -', () => {
     '-Users-user-Documents-1-Project-2209-iCloud-UMC-main',
   );
 });
+
+test('移除 Claude Code 的貼上標籤', () => {
+  const text = [
+    JSON.stringify({ type: 'user', message: { content: '<pasted_content id="5883">\n回覆時可以拿掉嗎？\n</pasted_content id="5883">' } }),
+    JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: '<pasted_content>\n第二則\n</pasted_content>' }] } }),
+  ].join('\n');
+  assert.deepEqual(parseClaude(text).messages, [
+    { role: 'user', text: '回覆時可以拿掉嗎？' },
+    { role: 'user', text: '第二則' },
+  ]);
+});
