@@ -2,6 +2,7 @@
 
 import type { AgentView, ChatMessage, CompletionItem, FromWebview, PresetView, Transcript, Usage } from '../src/shared';
 import { renderMarkdown } from './markdown';
+import { shortModel } from '../src/modelName';
 
 type Child = Node | string | null | undefined | false;
 
@@ -58,6 +59,8 @@ export class ChatView {
   private completionTimer: number | undefined;
   private nextRequestId = 1;
   private stickToBottom = true;
+  /** 目前開啟的標籤選單。 */
+  private openPicker: 'model' | 'effort' | null = null;
 
   constructor(private readonly host: ChatHost) {}
 
@@ -365,12 +368,12 @@ export class ChatView {
 
     const toolbar: Child[] = [
       h('button', { class: 'tool-button', title: '附加檔案', 'aria-label': '附加檔案', onclick: () => send({ type: 'pickFiles', paneId }) }, icon('attach')),
-      h('button', { class: 'tool-button', title: '提及檔案（@）', 'aria-label': '提及檔案', onclick: () => insertTrigger('@') }, '@'),
-      h('button', { class: 'tool-button', title: '指令（/）', 'aria-label': '指令', onclick: () => insertTrigger('/') }, '/'),
+      h('button', { class: 'tool-button trigger', title: '提及檔案（@）', 'aria-label': '提及檔案', onclick: () => insertTrigger('@') }, '@'),
+      h('button', { class: 'tool-button trigger', title: '指令（/）', 'aria-label': '指令', onclick: () => insertTrigger('/') }, '/'),
     ];
     if (preset?.models.length) {
       toolbar.push(
-        this.pickerSelect(preset.models, draft.model, '模型', currentModel, !preset.canSwitchModel, (value) => {
+        this.chipPicker('model', preset.models, draft.model, '模型', currentModel, !preset.canSwitchModel, (value) => {
           draft.model = value || undefined;
           draft.modelDirty = Boolean(value) && value !== currentModel;
           this.host.persist();
@@ -379,7 +382,7 @@ export class ChatView {
     }
     if (preset?.efforts.length) {
       toolbar.push(
-        this.pickerSelect(preset.efforts, draft.effort, 'Effort', currentEffort, !preset.canSwitchEffort, (value) => {
+        this.chipPicker('effort', preset.efforts, draft.effort, 'Effort', currentEffort, !preset.canSwitchEffort, (value) => {
           draft.effort = value || undefined;
           draft.effortDirty = Boolean(value) && value !== currentEffort;
           this.host.persist();
@@ -426,29 +429,106 @@ export class ChatView {
     this.renderCompletion();
   }
 
-  private pickerSelect(
+  /**
+   * Copilot 樣式的標籤選單：顯示目前的值，點選後在上方開啟選項清單。
+   * 模型顯示短名稱（claude-opus-5-5 → opus-5.5）；effort 只顯示值。
+   */
+  private chipPicker(
+    id: 'model' | 'effort',
     options: string[],
     value: string | undefined,
     label: string,
     current: string | undefined,
     disabled: boolean,
     onChange: (value: string) => void,
-  ): HTMLSelectElement {
+  ): HTMLElement {
     const { h } = this.host;
     const all = current && !options.includes(current) ? [current, ...options] : options;
-    const element = h(
-      'select',
+    const show = (option: string | undefined) => (option ? (id === 'model' ? shortModel(option) : option) : '預設');
+    const button = h(
+      'button',
       {
-        class: 'picker',
-        'aria-label': label,
-        title: disabled ? `這個 agent 不支援在對話中切換${label}` : `${label}（下一則訊息生效）`,
+        class: `chip-picker ${this.openPicker === id ? 'open' : ''}`,
+        'aria-label': `${label}：${value ?? '目前設定'}`,
+        'aria-haspopup': 'listbox',
+        'aria-expanded': String(this.openPicker === id),
+        title: disabled ? `這個 agent 不支援在對話中切換${label}` : `${label}：${value ?? '目前設定'}（下一則訊息生效）`,
         disabled,
-        onchange: (event: Event) => onChange((event.target as HTMLSelectElement).value),
       },
-      current ? null : h('option', { value: '', selected: !value }, `${label}：目前設定`),
-      ...all.map((option) => h('option', { value: option, selected: option === value }, option)),
+      h('span', { class: 'chip-picker-text' }, show(value)),
+      h('span', { class: 'chip-picker-caret', 'aria-hidden': 'true' }, '▾'),
     );
-    return element;
+    const wrap = h('span', { class: 'chip-picker-wrap' }, button);
+    const close = () => {
+      this.openPicker = null;
+      wrap.querySelector('.picker-menu')?.remove();
+      button.classList.remove('open');
+      button.setAttribute('aria-expanded', 'false');
+    };
+    const open = () => {
+      this.openPicker = id;
+      button.classList.add('open');
+      button.setAttribute('aria-expanded', 'true');
+      const menu = h(
+        'div',
+        { class: 'picker-menu', role: 'listbox', 'aria-label': label },
+        h('div', { class: 'picker-menu-title' }, label),
+        ...all.map((option) =>
+          h(
+            'button',
+            {
+              class: `picker-option ${option === value ? 'selected' : ''}`,
+              role: 'option',
+              'aria-selected': String(option === value),
+              title: option,
+              onclick: (event: MouseEvent) => {
+                event.stopPropagation();
+                value = option;
+                onChange(option);
+                (button.querySelector('.chip-picker-text') as HTMLElement).textContent = show(option);
+                close();
+              },
+            },
+            h('span', { class: 'picker-check', 'aria-hidden': 'true' }, option === value ? '✓' : ''),
+            h('span', { class: 'picker-option-text' }, show(option)),
+            option === current ? h('span', { class: 'picker-option-full' }, '目前') : null,
+          ),
+        ),
+      );
+      wrap.append(menu);
+      // 選單超出側邊欄右側時往左移。
+      const overflow = menu.getBoundingClientRect().right - (document.documentElement.clientWidth - 6);
+      if (overflow > 0) menu.style.left = `${-overflow}px`;
+      (menu.querySelector('.selected') as HTMLElement | null ?? menu.querySelector('.picker-option') as HTMLElement | null)?.focus();
+      menu.addEventListener('keydown', (event) => {
+        const items = [...menu.querySelectorAll<HTMLElement>('.picker-option')];
+        const index = items.indexOf(document.activeElement as HTMLElement);
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          close();
+          button.focus();
+        }
+      });
+    };
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (this.openPicker === id && wrap.querySelector('.picker-menu')) close();
+      else {
+        this.composer?.querySelectorAll('.picker-menu').forEach((menu) => menu.remove());
+        open();
+      }
+    });
+    wrap.addEventListener('focusout', (event) => {
+      if (!wrap.contains(event.relatedTarget as Node | null)) setTimeout(() => {
+        if (!wrap.contains(document.activeElement)) close();
+      }, 0);
+    });
+    // 重新繪製輸入區時保持選單開啟。
+    if (this.openPicker === id && !disabled) queueMicrotask(open);
+    return wrap;
   }
 
   private renderUsage(usage: Usage): HTMLElement {
@@ -468,7 +548,7 @@ export class ChatView {
       'span',
       { class: `usage ${level}`, title: lines.join('\n'), 'aria-label': lines.join('，'), tabindex: 0 },
       percent !== null ? ring(h('span', { class: 'usage-ring' }), percent) : null,
-      percent !== null ? `${percent.toFixed(0)}%` : formatTokens(context),
+      h('span', { class: 'usage-text' }, percent !== null ? `${percent.toFixed(0)}%` : formatTokens(context)),
     );
   }
 
@@ -657,7 +737,7 @@ export class ChatView {
             this.accept(item);
           },
         },
-        this.host.icon(item.kind === 'file' ? 'file' : 'command'),
+        item.kind === 'file' ? this.host.icon('file') : null,
         h('span', { class: 'completion-label' }, item.label),
         item.description ? h('span', { class: 'completion-desc' }, item.description) : null,
       ),
@@ -667,7 +747,7 @@ export class ChatView {
         ? h(
             'div',
             { class: 'completion-footer' },
-            '↑↓ 選擇 · Enter/Tab 插入 · Esc 關閉',
+            '↑↓ 選擇 · Enter 插入',
             h(
               'button',
               {
@@ -678,10 +758,10 @@ export class ChatView {
                   this.host.send({ type: 'refreshCommands', paneId });
                 },
               },
-              '從 agent 更新清單',
+              '更新清單',
             ),
           )
-        : h('div', { class: 'completion-footer' }, '↑↓ 選擇 · Enter/Tab 插入 · Esc 關閉');
+        : h('div', { class: 'completion-footer' }, '↑↓ 選擇 · Enter 插入');
     popup.replaceChildren(...rows, footer);
     popup.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
   }
@@ -750,3 +830,4 @@ function ring(element: HTMLElement, percent: number): HTMLElement {
   element.style.setProperty('--p', percent.toFixed(1));
   return element;
 }
+

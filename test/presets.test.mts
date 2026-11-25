@@ -27,3 +27,12 @@ test('切換指令與選項檢查', () => {
     ['A'],
   );
 });
+
+import { shortModel } from '../src/modelName.ts';
+
+test('模型短名稱', () => {
+  assert.equal(shortModel('claude-opus-5-5'), 'opus-5.5');
+  assert.equal(shortModel('claude-sonnet-4-5-20250929'), 'sonnet-4.5');
+  assert.equal(shortModel('opus'), 'opus');
+  assert.equal(shortModel('gpt-6.1-sol'), 'gpt-6.1-sol');
+});
