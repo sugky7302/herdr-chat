@@ -9,9 +9,11 @@ const bundle = await build({
   bundle: true, write: false, format: 'iife', loader: { '.css': 'empty' }, logLevel: 'silent',
 });
 
-function fixture() {
+function fixture(language = 'zh-TW', browserLanguage = 'en-US') {
   const window = new Window({ url: 'http://localhost', settings: { enableJavaScriptEvaluation: true, suppressInsecureJavaScriptEnvironmentWarning: true } });
   const document = window.document;
+  document.documentElement.lang = language;
+  Object.defineProperty(window.navigator, 'language', { configurable: true, value: browserLanguage });
   document.body.innerHTML = '<div id="app"></div>';
   // DOM 測試不計算版面。以連接狀態模擬瀏覽器量測，另以真實瀏覽器驗證捲動。
   Object.defineProperty(window.HTMLElement.prototype, 'scrollHeight', { configurable: true, get() {
@@ -139,8 +141,8 @@ test('加入佇列使用紙飛機圖示，且維持 queue 送出模式', async (
   } finally { await f.window.happyDOM.close(); }
 });
 
-function collaborationFixture() {
-  const f = fixture();
+function collaborationFixture(language = 'zh-TW') {
+  const f = fixture(language);
   f.state.presets = [
     { id: 'codex', label: 'Codex', models: [], efforts: [], canSwitchModel: false, canSwitchEffort: false, canAutomate: true },
     { id: 'custom', label: 'Custom shell', models: [], efforts: [], canSwitchModel: false, canSwitchEffort: false, canAutomate: false },
@@ -469,4 +471,78 @@ test('原生權限等待不提供 answer，派送失敗與 worker 失敗回報�
     f.click('[data-task-page="chat"]');
     assert.match(f.document.querySelector('[data-agent-pane="wE:p2"]')!.textContent, /已回報失敗/);
   } finally { await f.window.happyDOM.close(); }
+});
+
+test('English display language localizes navigation, accessibility and memory controls while preserving user content', async () => {
+  const f = collaborationFixture('en-US');
+  try {
+    assert.deepEqual(Array.from(f.document.querySelectorAll('.task-tab')).map((item) => item.textContent), ['Chat', 'Collaboration', 'Memory']);
+    assert.equal(f.input().getAttribute('aria-label'), 'Message');
+    assert.match(f.input().placeholder, /Working: Enter to queue/);
+    assert.equal(f.document.querySelector('.send-button')!.getAttribute('aria-label'), 'Queue message');
+    assert.match(f.document.querySelector('.task-planner')!.textContent, /Planner: Claude/);
+    assert.match(f.document.querySelector('[data-agent-pane="wE:p2"]')!.textContent, /Running/);
+
+    const original = '取消 / Save as memory / {0} / /專案/auth.ts';
+    f.transcript.messages = [{ role: 'assistant', text: original }]; f.updateTranscript();
+    assert.equal(f.document.querySelector('.assistant-message')?.textContent?.includes(original) ?? f.messages().textContent.includes(original), true);
+    f.button('Save as memory').click();
+    assert.equal(f.document.querySelector('#task-memory-title')!.getAttribute('aria-label'), 'Memory title');
+    assert.equal(f.document.querySelector<DOMTextArea>('#task-memory-text')!.value, original);
+    f.button('Save to Claude-mem').click();
+    const saved = f.sent.filter((message) => message.type === 'saveTaskMemory').at(-1);
+    assert.equal(saved.text, original);
+    assert.equal(saved.source.text, original);
+    f.emit({ type: 'taskOperation', kind: 'memory', tabId: f.task.tabId, operationId: saved.operationId, memoryId: 100 });
+    assert.equal(f.document.querySelector('.task-feedback')!.textContent, 'Saved to Claude-mem · memory #100');
+
+    f.task.requests[0].report = { status: 'needs_input', text: '請保留「取消」原文', at: '2026-01-01T10:01:00Z', reportId: 'report-1' };
+    f.task.requests[0].status = 'needs_input'; f.emitTasks();
+    f.click('[data-task-page="collaboration"]');
+    assert.equal(f.document.querySelector('.task-request-status')!.textContent, 'Awaiting planner response');
+    assert.equal(f.document.querySelector('.task-request-prompt')!.textContent, '重構 auth 並回報測試結果');
+    assert.match(f.document.querySelector('.task-request-report')!.textContent, /Clarification needed請保留「取消」原文/);
+    assert.equal(f.document.querySelector('.task-answer-text')!.getAttribute('aria-label'), 'Reply to R-01');
+    f.click('[data-task-page="memory"]');
+    assert.equal(f.document.querySelector('.task-memory-reference strong')!.textContent, '保留 401 格式');
+    assert.equal(f.document.querySelector('.task-memory-text')!.textContent, '不變更對外 API');
+    assert.equal(f.document.querySelector('.task-memory-reference time')!.textContent, new Date('2026-01-01T10:01:00Z').toLocaleString('en'));
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('webview uses the host language rather than navigator language and falls back to English', async () => {
+  for (const language of ['fr-FR', 'zh-CN', '']) {
+    const f = fixture(language, 'zh-TW');
+    try {
+      assert.equal(f.document.querySelector('[data-task-page="chat"]')!.textContent, 'Chat', `fallback for ${language}`);
+      assert.equal(f.input().getAttribute('aria-label'), 'Message');
+      assert.equal(f.document.querySelector('[title="Scroll to latest message"]') !== null, true);
+    } finally { await f.window.happyDOM.close(); }
+  }
+  for (const language of ['zh-Hant', 'zh-HK']) {
+    const f = fixture(language, 'en-US');
+    try {
+      assert.equal(f.document.querySelector('[data-task-page="chat"]')!.textContent, '對話');
+      assert.equal(f.input().getAttribute('aria-label'), '訊息');
+    } finally { await f.window.happyDOM.close(); }
+  }
+});
+
+test('persisted system messages render in the current language without translating historical user reports', async () => {
+  for (const language of ['en', 'zh-TW']) {
+    const f = collaborationFixture(language);
+    try {
+      const agentName = '自訂 agent {0}';
+      f.task.events.push({ id: 'localized-event', type: 'state_changed', at: '2026-01-01T10:02:00Z', text: '舊語言文字', localization: { message: 'Planner: {0}', args: [agentName] } });
+      f.task.events.push({ id: 'original-event', type: 'reported', at: '2026-01-01T10:02:00Z', text: 'Cancel / 取消 / {0}' });
+      f.task.requests[0].error = '保存於舊語言的錯誤';
+      f.task.requests[0].errorLocalization = { message: 'No checkpoint available yet' };
+      f.emitTasks(); f.click('[data-task-page="collaboration"]');
+      assert.equal(f.document.querySelector('[data-event-id="localized-event"] p')!.textContent, `${language === 'en' ? 'Planner: ' : '規劃者：'}${agentName}`);
+      assert.equal(f.document.querySelector('[data-event-id="original-event"] p')!.textContent, 'Cancel / 取消 / {0}');
+      assert.equal(f.document.querySelector('.task-request .task-inline-error')!.textContent, language === 'en' ? 'No checkpoint available yet' : '尚未取得快照');
+      assert.equal(f.task.events.at(-2).text, '舊語言文字', 'rendering must not rewrite stored history');
+      assert.equal(f.task.requests[0].error, '保存於舊語言的錯誤');
+    } finally { await f.window.happyDOM.close(); }
+  }
 });

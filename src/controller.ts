@@ -1,3 +1,4 @@
+import { t } from './l10n.ts';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -233,7 +234,7 @@ export class Controller implements vscode.Disposable {
       this.snapshot = await this.client.snapshot();
       base.connected = true;
       if (!this.gitRoot) {
-        this.publish({ ...base, error: '目前的 VS Code 視窗沒有開啟 git 專案。' });
+        this.publish({ ...base, error: t("No Git project is open in this VS Code window.") });
         return;
       }
       this.worktrees = await this.client
@@ -244,7 +245,7 @@ export class Controller implements vscode.Disposable {
         .filter((tree) => !tree.is_bare && !tree.is_prunable)
         .map((tree) => ({
           path: tree.path,
-          branch: tree.branch ?? (tree.is_detached ? `（detached）${shortPath(tree.path)}` : path.basename(tree.path)),
+          branch: tree.branch ?? (tree.is_detached ? t("(detached) {0}", shortPath(tree.path)) : path.basename(tree.path)),
           workspaceId: tree.open_workspace_id ?? null,
           current: samePath(tree.path, selected),
         }));
@@ -309,19 +310,19 @@ export class Controller implements vscode.Disposable {
       ?? this.selectedWorktreePath()
     ) : undefined;
     await this.collaborationReady;
-    if (this.collaborationError) throw new Error(`協作紀錄無法啟動：${this.collaborationError}`);
+    if (this.collaborationError) throw new Error(t("Collaboration history could not be started: {0}", this.collaborationError));
     const existing = this.collaboration.getTaskForTab(tabId)
       ?? this.collaboration.getTasks().find((task) => task.tabId === tabId && task.status === 'archived');
     if (existing) {
-      if (!repositoryRoot || !samePath(existing.repositoryRoot, repositoryRoot)) throw new Error('這個問題不屬於目前專案。');
+      if (!repositoryRoot || !samePath(existing.repositoryRoot, repositoryRoot)) throw new Error(t("This task does not belong to the current project."));
       this.publishCollaboration();
       if (tab && existing.status !== 'archived' && existing.title !== tab.label) return this.collaboration.updateTaskTitle(existing.id, tab.label);
       return existing;
     }
-    if (!tab || !repositoryRoot || !checkoutPath) throw new Error('找不到目前問題，請重新整理。');
+    if (!tab || !repositoryRoot || !checkoutPath) throw new Error(t("The current task could not be found. Refresh and try again."));
     const agents = tab.agents.filter((agent) => agent.status !== 'shell' && agent.kind);
     const planner = agents.find((agent) => agent.presetId === 'claude') ?? agents[0];
-    if (!planner) throw new Error('請先在這個問題中啟動一個 agent。');
+    if (!planner) throw new Error(t("Start an agent in this task first."));
     return this.collaboration.ensureTask({ tabId, title: tab.label, repositoryRoot, checkoutPath, plannerPaneId: planner.paneId });
   }
 
@@ -333,7 +334,7 @@ export class Controller implements vscode.Disposable {
 
   async requestHandoff(tabId: string, target: { paneId: string } | { presetId: string }): Promise<void> {
     const task = await this.openTask(tabId);
-    if (task.status === 'archived') throw new Error('這個問題已封存，請先在 Herdr 開啟工作中的問題。');
+    if (task.status === 'archived') throw new Error(t("This task is archived. Open an active task in Herdr first."));
     await this.collaboration.beginHandoff(task.id, 'paneId' in target ? { targetPaneId: target.paneId } : { presetId: target.presetId });
   }
 
@@ -346,11 +347,11 @@ export class Controller implements vscode.Disposable {
   async copyCollaborationPrompt(tabId: string): Promise<void> {
     const task = await this.openTask(tabId);
     await vscode.env.clipboard.writeText(this.collaboration.getCollaborationPrompt(task.id));
-    void vscode.window.showInformationMessage('已複製這個問題的協作指令，可貼給規劃者。');
+    void vscode.window.showInformationMessage(t("The collaboration instructions for this task have been copied. Paste them into the planner."));
   }
 
   async delegateTask(tabId: string, target: { paneId: string } | { presetId: string }, text: string): Promise<void> {
-    if (!text.trim()) throw new Error('請輸入派工內容。');
+    if (!text.trim()) throw new Error(t("Enter the work to delegate."));
     const task = await this.openTask(tabId);
     const paneId = 'paneId' in target ? target.paneId : await this.createCollaborationAgent(target.presetId, task.tabId);
     await this.collaboration.delegateFromUser(task.id, paneId, text.trim());
@@ -363,15 +364,15 @@ export class Controller implements vscode.Disposable {
 
   async saveTaskMemory(message: Extract<FromWebview, { type: 'saveTaskMemory' }>): Promise<number> {
     const task = await this.openTask(message.tabId);
-    if (task.status === 'archived') throw new Error('這個問題已封存，記憶僅供閱讀。');
-    if (message.text.length > 200_000 || message.title.length > 500) throw new Error('記憶內容過長，請選取要保留的段落。');
+    if (task.status === 'archived') throw new Error(t("This task is archived. Its memories are read-only."));
+    if (message.text.length > 200_000 || message.title.length > 500) throw new Error(t("The memory is too long. Select the passages you want to keep."));
     if (message.source) {
       const source = message.source;
       const cached = this.transcriptSnapshots.get(source.paneId);
       const live = (await this.livePanes()).find((pane) => pane.pane_id === source.paneId && pane.tab_id === task.tabId);
-      if (!live || !cached || !sameIdentity(cached.identity, paneIdentity(live))) throw new Error('記憶來源的 agent/session 已改變，請重新選取來源；草稿仍會保留。');
+      if (!live || !cached || !sameIdentity(cached.identity, paneIdentity(live))) throw new Error(t("The memory source agent or session has changed. Select the source again; your draft is preserved."));
       if (!cached.transcript.messages.some((item) => item.role === source.role && item.text === source.text)) {
-        throw new Error('來源訊息已更新，請重新選取來源；編輯中的記憶內容仍會保留。');
+        throw new Error(t("The source message has changed. Select it again; your memory draft is preserved."));
       }
       await this.collaboration.registerParticipant(task.id, source.paneId);
     }
@@ -392,12 +393,12 @@ export class Controller implements vscode.Disposable {
     if (!pane) return undefined;
     const task = this.collaboration?.getTaskForTab(pane.tab_id);
     if (!task) return undefined;
-    if (task.status === 'handoff_pending' && task.planner.paneId === paneId) return '規劃者正在交接，原規劃回合已暫停。';
+    if (task.status === 'handoff_pending' && task.planner.paneId === paneId) return t("A planner handoff is in progress. The previous planning turn is paused.");
     if (task.status === 'handoff_pending' && task.handoffs.some((handoff) => handoff.status === 'awaiting_accept' && handoff.target?.paneId === paneId)) {
-      return '正在等待新規劃者明確接受交接，請先完成接手。';
+      return t("Waiting for the new planner to explicitly accept the handoff. Complete the handoff first.");
     }
     if (task.planner.paneId !== paneId && task.handoffs.some((handoff) => handoff.status === 'accepted' && handoff.from.paneId === paneId)) {
-      return '這個規劃者已交接，請在現任規劃者的對話中繼續。';
+      return t("This planner has handed off the task. Continue in the current planner's conversation.");
     }
     return undefined;
   }
@@ -416,7 +417,7 @@ export class Controller implements vscode.Disposable {
   private async recordDeliveredMessage(taskId: string | undefined, paneId: string, text: string): Promise<void> {
     if (!taskId || !text.trim()) return;
     try { await this.collaboration.recordUserMessage(taskId, paneId, text); }
-    catch (error) { this.post({ type: 'error', text: `訊息已送出，但協作紀錄無法保存；請勿重送同一訊息。${describe(error)}` }); }
+    catch (error) { this.post({ type: 'error', text: t("The message was sent, but the collaboration record could not be saved. Do not send the same message again. {0}", describe(error)) }); }
   }
 
   /** Independent from selected pane: keep usable evidence before the old planner becomes unavailable. */
@@ -432,15 +433,15 @@ export class Controller implements vscode.Disposable {
   }
 
   private async captureCheckpoint(task: CollaborationTask): Promise<string> {
-    const lines = [`工作目錄：${task.checkoutPath}`, `資料擷取時間：${new Date().toISOString()}`];
+    const lines = [`Working directory: ${task.checkoutPath}`, `Captured at: ${new Date().toISOString()}`];
     try {
       const [branch, commit, status] = await Promise.all([
         run('git', ['-C', task.checkoutPath, 'branch', '--show-current'], { timeout: 5000 }),
         run('git', ['-C', task.checkoutPath, 'rev-parse', 'HEAD'], { timeout: 5000 }),
         run('git', ['-C', task.checkoutPath, 'status', '--short'], { timeout: 5000 }),
       ]);
-      lines.push(`分支：${branch.stdout.trim() || '(detached)'}`, `Commit：${commit.stdout.trim()}`, `當下檔案狀態（worker 仍可能修改）：\n${status.stdout.trim() || '乾淨'}`);
-    } catch { lines.push('目前無法取得 Git 狀態，接手後請核對工作目錄。'); }
+      lines.push(`Branch: ${branch.stdout.trim() || '(detached)'}`, `Commit: ${commit.stdout.trim()}`, `Current file status (workers may still be editing):\n${status.stdout.trim() || 'clean'}`);
+    } catch { lines.push('Git status is currently unavailable. Verify the working directory after accepting the handoff.'); }
     const live = await this.livePanes().catch(() => []);
     for (const participant of task.participants) {
       const pane = live.find((item) => item.pane_id === participant.paneId);
@@ -452,30 +453,30 @@ export class Controller implements vscode.Disposable {
         if (transcript) this.transcriptSnapshots.set(participant.paneId, { identity: paneIdentity(pane), transcript });
       }
       lines.push(`\n## ${participant.name ?? participant.harness} (${participant.paneId})`,
-        `Session：${participant.session?.value ?? '未提供'}；狀態：${sameSession ? pane?.agent_status ?? '未知' : '原 session 已離線'}`);
+        `Session: ${participant.session?.value ?? 'unavailable'}; status: ${sameSession ? pane?.agent_status ?? 'unknown' : 'original session is offline'}`);
       if (transcript) {
         const firstUser = transcript.messages.find((message) => message.role === 'user');
-        if (firstUser) lines.push(`最早可讀的使用者要求：${firstUser.text.slice(0, 8000)}`);
+        if (firstUser) lines.push(`Earliest available user request: ${firstUser.text.slice(0, 8000)}`);
         for (const message of transcript.messages.slice(-24)) lines.push(`[${message.role}${message.tool ? `:${message.tool}` : ''}] ${message.text.slice(0, 4000)}`);
-      } else lines.push('原生對話目前不可讀，請參考已保存的目標、派工與回報。');
+      } else lines.push('The native conversation is unavailable. Refer to the saved goal, delegations, and reports.');
       const queue = sameSession ? this.queues.get(participant.paneId) ?? [] : [];
-      if (queue.length) lines.push('尚未送出的使用者要求：', ...queue.map((item) => item.text));
+      if (queue.length) lines.push('Queued user requests (not sent yet):', ...queue.map((item) => item.text));
     }
-    if (task.memoryReferences.length) lines.push('\n## 本問題已保存的記憶', ...task.memoryReferences.map((memory) => `#${memory.id} ${memory.title ?? ''}\n${memory.text ?? '(可依 ID 從 Claude-mem 讀取)'}`));
+    if (task.memoryReferences.length) lines.push('\n## Memories saved for this task', ...task.memoryReferences.map((memory) => `#${memory.id} ${memory.title ?? ''}\n${memory.text ?? '(retrieve from Claude-mem by ID)'}`));
     const text = lines.join('\n');
-    return text.length > 100_000 ? `${text.slice(0, 100_000)}\n[Checkpoint 原文已截短；請回原 pane 或原生紀錄核對更早內容。]` : text;
+    return text.length > 100_000 ? `${text.slice(0, 100_000)}\n[Checkpoint text was truncated. Check the original pane or native transcript for earlier content.]` : text;
   }
 
   /** Spawn against the captured tab, never the worktree currently selected in the UI. */
   private async createCollaborationAgent(presetId: string, tabId: string, model?: string, effort?: string): Promise<string> {
     const task = this.collaboration.getTaskForTab(tabId);
-    if (!task || task.status === 'archived') throw new Error('找不到可建立協作者的問題。');
+    if (!task || task.status === 'archived') throw new Error(t("No active task is available for creating a collaborator."));
     const preset = this.presets().find((item) => item.id === presetId);
-    if (!preset?.kind) throw new Error('自動協作需要 Herdr 能識別的 agent kind；自訂 shell 指令請先手動啟動並確認識別。');
+    if (!preset?.kind) throw new Error(t("Automatic collaboration requires an agent kind recognized by Herdr. Start custom shell agents manually and confirm that Herdr recognizes them."));
     const live = await this.livePanes();
     const anchor = live.find((pane) => pane.tab_id === tabId && pane.pane_id === task.planner.paneId)
       ?? live.find((pane) => pane.tab_id === tabId);
-    if (!anchor) throw new Error('原問題的 tab 已關閉，無法在其他 tab 代為建立。');
+    if (!anchor) throw new Error(t("The original task tab is closed. A collaborator cannot be created in a different tab."));
     const split = await this.client.request<any>('pane.split', { target_pane_id: anchor.pane_id, direction: 'right', cwd: task.checkoutPath, focus: false });
     const paneId: string = split.pane.pane_id;
     const chosenModel = model || preset.defaultModel, chosenEffort = effort || preset.defaultEffort;
@@ -562,7 +563,7 @@ export class Controller implements vscode.Disposable {
     if (!pane) {
       this.post({
         type: 'transcript',
-        transcript: { paneId, source: 'terminal', messages: [{ role: 'notice', text: '這個 pane 已經關閉。' }] },
+        transcript: { paneId, source: 'terminal', messages: [{ role: 'notice', text: t("This pane is closed.") }] },
       });
       return;
     }
@@ -616,7 +617,7 @@ export class Controller implements vscode.Disposable {
   }
 
   async createWorktree(branch: string): Promise<void> {
-    if (!this.gitRoot) throw new Error('目前沒有 git 專案。');
+    if (!this.gitRoot) throw new Error(t("No Git project is open."));
     const result = await this.client.request<any>(
       'worktree.create',
       { cwd: this.gitRoot, branch, focus: false },
@@ -629,7 +630,7 @@ export class Controller implements vscode.Disposable {
 
   /** 為目前選擇的 worktree 建立 herdr workspace。 */
   async createWorkspace(): Promise<void> {
-    if (!this.gitRoot) throw new Error('目前沒有 git 專案。');
+    if (!this.gitRoot) throw new Error(t("No Git project is open."));
     const target = this.selectedWorktreePath();
     const tree = this.worktrees?.worktrees.find((item) => samePath(item.path, target));
     if (tree?.is_linked_worktree) {
@@ -657,7 +658,7 @@ export class Controller implements vscode.Disposable {
   }
 
   async newTab(): Promise<void> {
-    await this.createTab('新對話');
+    await this.createTab(t("New conversation"));
     await this.refresh();
   }
 
@@ -669,12 +670,12 @@ export class Controller implements vscode.Disposable {
   async newAgent(presetId: string, tabId: string | null, model?: string, effort?: string): Promise<string> {
     if (presetId === SHELL_PRESET) {
       this.requireWorkspace();
-      const paneId = tabId ? await this.splitPane(tabId) : await this.createTab('終端機');
+      const paneId = tabId ? await this.splitPane(tabId) : await this.createTab(t("Terminal"));
       await this.refresh();
       return paneId;
     }
     const preset = this.presets().find((item) => item.id === presetId);
-    if (!preset) throw new Error(`找不到選項 ${presetId}。`);
+    if (!preset) throw new Error(t("Preset {0} could not be found.", presetId));
     model ||= preset.defaultModel;
     effort ||= preset.defaultEffort;
     this.requireWorkspace();
@@ -760,7 +761,7 @@ export class Controller implements vscode.Disposable {
     options: { model?: string; effort?: string; attachments?: string[]; mode?: 'queue' | 'now' } = {},
   ): Promise<void> {
     const pane = this.pane(paneId);
-    if (!pane) throw new Error('這個 pane 已經關閉。');
+    if (!pane) throw new Error(t("This pane is closed."));
     this.assertPlannerWritable(paneId);
     // Pending/edited/cancelled messages remain queue state; only delivered text becomes a user request.
     const task = await this.openTask(pane.tab_id).catch(() => undefined);
@@ -790,7 +791,7 @@ export class Controller implements vscode.Disposable {
       return;
     }
     if (options.mode === 'now' && busy && (message.model || message.effort)) {
-      throw new Error('agent 工作中無法切換模型或 effort。請等它完成，或改用佇列送出。');
+      throw new Error(t("The model or effort cannot be changed while the agent is working. Wait for it to finish, or queue the message."));
     }
     await this.deliver(paneId, message);
   }
@@ -798,9 +799,9 @@ export class Controller implements vscode.Disposable {
   /** 修改尚未送出的訊息，保留原本的順序、附件與模型設定。 */
   async updateQueued(paneId: string, id: number, text: string): Promise<void> {
     const item = this.queues.get(paneId)?.find((entry) => entry.id === id);
-    if (!item) throw new Error('這則訊息已送出或移除，無法修改。');
+    if (!item) throw new Error(t("This message has already been sent or removed and cannot be edited."));
     const next = text.trim();
-    if (!next && !item.attachments.length) throw new Error('請輸入訊息，或保留至少一個附件。');
+    if (!next && !item.attachments.length) throw new Error(t("Enter a message or keep at least one attachment."));
     item.text = next;
     this.refreshQueueCheckpoint(paneId);
     await this.pushTranscript();
@@ -878,7 +879,7 @@ export class Controller implements vscode.Disposable {
   private async deliverNow(paneId: string, text: string, model?: string, effort?: string): Promise<void> {
     this.assertPlannerWritable(paneId);
     const pane = this.pane(paneId);
-    if (!pane) throw new Error('這個 pane 已經關閉。');
+    if (!pane) throw new Error(t("This pane is closed."));
     const task = this.collaboration?.getTaskForTab(pane.tab_id);
     const memory = this.paneMemory()[paneId];
     const preset =
@@ -895,7 +896,7 @@ export class Controller implements vscode.Disposable {
       const current = await this.transcripts.read(pane).catch(() => null);
       const nextModel = model ?? current?.model ?? memory?.model;
       const nextEffort = effort ?? current?.effort ?? memory?.effort;
-      if (!nextModel || !nextEffort) throw new Error('無法得知 Codex 目前的模型或 effort，請兩個都選擇後再送出。');
+      if (!nextModel || !nextEffort) throw new Error(t("The current Codex model or effort could not be determined. Select both before sending."));
       await this.codexSwitch(paneId, nextModel, nextEffort);
       next.model = nextModel;
       next.effort = nextEffort;
@@ -987,34 +988,34 @@ export class Controller implements vscode.Disposable {
         await this.client.request('pane.send_keys', { pane_id: paneId, keys: ['esc'] });
         await sleep(200);
       }
-      throw new Error(`無法切換 Codex 設定：${reason}`);
+      throw new Error(t("Could not change Codex settings: {0}", reason));
     };
     await this.client.request('agent.prompt', { target: paneId, text: '/model' });
     const opened = await this.waitForMenu(paneId, ['model']);
-    if (opened.kind !== 'model') return fail('沒有出現模型選單。');
-    if (!(await this.highlight(paneId, 'model', normalizeLabel(model)))) return fail(`選單中找不到模型 ${model}。`);
+    if (opened.kind !== 'model') return fail(t("The model menu did not appear."));
+    if (!(await this.highlight(paneId, 'model', normalizeLabel(model)))) return fail(t("Model {0} was not found in the menu.", model));
     await this.client.request('pane.send_keys', { pane_id: paneId, keys: ['enter'] });
-    if ((await this.waitForMenu(paneId, ['effort'])).kind !== 'effort') return fail('沒有出現 effort 選單。');
+    if ((await this.waitForMenu(paneId, ['effort'])).kind !== 'effort') return fail(t("The effort menu did not appear."));
     const label = effortLabel(effort);
     let menu: MenuKind = 'effort';
     if (!parseMenu(await this.readScreen(paneId)).some((option) => option.name === label)) {
       // Max 與 Ultra 在「More reasoning…」子選單內。
-      if (!(await this.highlight(paneId, 'effort', 'more-reasoning'))) return fail(`選單中找不到 effort ${effort}。`);
+      if (!(await this.highlight(paneId, 'effort', 'more-reasoning'))) return fail(t("Effort {0} was not found in the menu.", effort));
       await this.client.request('pane.send_keys', { pane_id: paneId, keys: ['enter'] });
-      if ((await this.waitForMenu(paneId, ['advanced'])).kind !== 'advanced') return fail('沒有出現進階 effort 選單。');
+      if ((await this.waitForMenu(paneId, ['advanced'])).kind !== 'advanced') return fail(t("The advanced effort menu did not appear."));
       menu = 'advanced';
     }
-    if (!(await this.highlight(paneId, menu, label))) return fail(`選單中找不到 effort ${effort}。`);
+    if (!(await this.highlight(paneId, menu, label))) return fail(t("Effort {0} was not found in the menu.", effort));
     await this.client.request('pane.send_keys', { pane_id: paneId, keys: ['s'] });
     const closed = await this.waitForMenu(paneId, ['none'], 3000);
-    if (closed.kind !== 'none') return fail('選單沒有關閉。');
+    if (closed.kind !== 'none') return fail(t("The menu did not close."));
   }
 
   // ---------- tab 與 pane 管理 ----------
 
   async renameTab(tabId: string): Promise<void> {
     const tab = this.snapshot?.tabs.find((item) => item.tab_id === tabId);
-    const label = await vscode.window.showInputBox({ title: '重新命名對話（tab）', value: tab?.label ?? '', prompt: '輸入新名稱' });
+    const label = await vscode.window.showInputBox({ title: t("Rename conversation (tab)"), value: tab?.label ?? '', prompt: t("Enter a new name") });
     if (label === undefined || !label.trim()) return;
     await this.client.request('tab.rename', { tab_id: tabId, label: label.trim() });
     await this.refresh();
@@ -1023,9 +1024,9 @@ export class Controller implements vscode.Disposable {
   async closeTab(tabId: string): Promise<void> {
     const tab = this.snapshot?.tabs.find((item) => item.tab_id === tabId);
     const agents = (this.snapshot?.panes ?? []).filter((pane) => pane.tab_id === tabId && pane.agent).length;
-    const detail = agents ? `其中 ${agents} 個 agent 會一起結束。` : '其中的終端機會一起關閉。';
-    const choice = await vscode.window.showWarningMessage(`關閉對話「${tab?.label ?? tabId}」？`, { modal: true, detail }, '關閉');
-    if (choice !== '關閉') return;
+    const detail = agents ? t("Closing this tab will also stop its agents ({0}).", agents) : t("The terminals in this tab will also close.");
+    const choice = await vscode.window.showWarningMessage(t("Close conversation \"{0}\"?", tab?.label ?? tabId), { modal: true, detail }, t("Close"));
+    if (choice !== t("Close")) return;
     await this.client.request('tab.close', { tab_id: tabId });
     await this.collaborationReady;
     if (!this.collaborationError) await this.collaboration.archiveTask(tabId);
@@ -1035,9 +1036,9 @@ export class Controller implements vscode.Disposable {
   async renamePane(paneId: string): Promise<void> {
     const pane = this.pane(paneId);
     const label = await vscode.window.showInputBox({
-      title: '重新命名 pane',
+      title: t("Rename pane"),
       value: pane?.label ?? pane?.name ?? '',
-      prompt: '輸入新名稱。留空會清除名稱。',
+      prompt: t("Enter a new name. Leave it empty to clear the name."),
     });
     if (label === undefined) return;
     await this.client.request('pane.rename', { pane_id: paneId, label: label.trim() || null });
@@ -1047,9 +1048,9 @@ export class Controller implements vscode.Disposable {
   async closePane(paneId: string): Promise<void> {
     const pane = this.pane(paneId);
     const name = pane?.label || pane?.name || pane?.agent || paneId;
-    const detail = pane?.agent ? '這個 pane 中的 agent 會結束。' : '這個終端機會關閉。';
-    const choice = await vscode.window.showWarningMessage(`關閉「${name}」？`, { modal: true, detail }, '關閉');
-    if (choice !== '關閉') return;
+    const detail = pane?.agent ? t("The agent in this pane will stop.") : t("This terminal will close.");
+    const choice = await vscode.window.showWarningMessage(t("Close \"{0}\"?", name), { modal: true, detail }, t("Close"));
+    if (choice !== t("Close")) return;
     await this.client.request('pane.close', { pane_id: paneId });
     this.queues.delete(paneId);
     await this.refresh();
@@ -1060,7 +1061,7 @@ export class Controller implements vscode.Disposable {
     for (let step = 0; step < 20; step++) {
       const options = parseDialog(await this.readScreen(paneId));
       const current = options.find((option) => option.highlighted);
-      if (!current) throw new Error('確認畫面已經關閉。');
+      if (!current) throw new Error(t("The confirmation screen has already closed."));
       if (current.number === number) break;
       await this.client.request('pane.send_keys', { pane_id: paneId, keys: [number > current.number ? 'down' : 'up'] });
       await sleep(80);
@@ -1101,8 +1102,8 @@ export class Controller implements vscode.Disposable {
   /** 從執行中的 agent 讀取完整的 / 指令清單（會在 pane 中打開選單再關閉）。 */
   async refreshCommands(paneId: string): Promise<number> {
     const pane = this.pane(paneId);
-    if (!pane?.agent) throw new Error('這個 pane 沒有 agent。');
-    if (pane.agent_status !== 'idle' && pane.agent_status !== 'done') throw new Error('請等 agent 空閒後再更新指令清單。');
+    if (!pane?.agent) throw new Error(t("There is no agent in this pane."));
+    if (pane.agent_status !== 'idle' && pane.agent_status !== 'done') throw new Error(t("Wait until the agent is idle before refreshing its command list."));
     return this.commands.harvest(pane.agent, {
       type: (text) => this.client.request('pane.send_text', { pane_id: paneId, text }),
       keys: (keys) => this.client.request('pane.send_keys', { pane_id: paneId, keys }),
@@ -1118,7 +1119,7 @@ export class Controller implements vscode.Disposable {
       canSelectFiles: true,
       canSelectFolders: true,
       defaultUri: vscode.Uri.file(this.selectedWorktreePath()),
-      openLabel: '附加',
+      openLabel: t("Attach"),
     });
     return (uris ?? []).map((uri) => uri.fsPath);
   }
@@ -1153,7 +1154,7 @@ export class Controller implements vscode.Disposable {
   }
 
   private requireWorkspace(): ProjectState & { workspaceId: string } {
-    if (!this.state?.workspaceId) throw new Error('這個專案在 herdr 還沒有 workspace。請先建立 workspace。');
+    if (!this.state?.workspaceId) throw new Error(t("This project does not have a Herdr workspace yet. Create one first."));
     return this.state as ProjectState & { workspaceId: string };
   }
 }
@@ -1209,7 +1210,7 @@ function sleep(ms: number): Promise<void> {
 
 export function describe(error: unknown): string {
   if (error instanceof HerdrError && error.code === 'connection') {
-    return `${error.message}。請確認 herdr 正在執行（終端機執行 herdr status）。`;
+    return t("{0}. Make sure Herdr is running (run herdr status in a terminal).", error.message);
   }
   return error instanceof Error ? error.message : String(error);
 }

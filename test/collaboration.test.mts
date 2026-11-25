@@ -6,6 +6,9 @@ import * as path from 'node:path';
 import { CollaborationService } from '../src/collaboration/service.ts';
 import { callBridge, parseCli } from '../src/collaboration/cli.ts';
 import type { CollaborationHost, CollaborationTask, LivePane, RpcInput } from '../src/collaboration/types.ts';
+import { formatLocalized, getLocale, setLocale } from '../src/l10n.ts';
+
+setLocale('zh-tw');
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -217,7 +220,7 @@ test('reused pane sessions do not inherit old worker reservations or report auth
   const replacement = await f.service.delegateFromUser(f.task.id, 'worker', 'New work');
   assert.notEqual(replacement.id, original.id);
   assert.equal(f.latest().requests[0].status, 'failed');
-  assert.match(f.latest().requests[0].error!, /結果未確認/);
+  assert.match(formatLocalized(f.latest().requests[0].error!, f.latest().requests[0].errorLocalization), /結果未確認/);
   assert.deepEqual(f.latest().participants.filter((agent) => agent.paneId === 'worker').map((agent) => agent.session?.value), ['session-worker', 'new-session-worker']);
   await assert.rejects(f.report(original.id, 'completed', 'old work by new process'), { code: 'session_changed' });
   await f.report(replacement.id, 'completed', 'New work completed.');
@@ -246,7 +249,7 @@ test('uncertain planner setup is recorded and actual CLI status confirms the ent
   await assert.rejects(f.service.enablePlanner(second.id), /setup socket timeout/);
   const failed = f.service.getTasks().find((task) => task.id === second.id)!;
   assert.equal(failed.plannerDelivery?.status, 'uncertain');
-  assert.match(failed.events.at(-1)!.text, /不會自動重送/);
+  assert.match(formatLocalized(failed.events.at(-1)!.text, failed.events.at(-1)!.localization), /不會自動重送/);
   await assert.rejects(f.service.enablePlanner(second.id), { code: 'planner_delivery_uncertain' });
   assert.equal(setupAttempts, 2);
   await f.service.rpc({ command: 'status', taskId: second.id, caller: { paneId: next.pane_id, generation: 1 }, args: {} });
@@ -260,7 +263,7 @@ test('handoff can recover when the original planner session disappeared without 
   await f.service.beginHandoff(f.task.id, { targetPaneId: 'next' });
   assert.deepEqual(f.pauses, [], 'do not send Escape to a different session reusing the old pane');
   assert.equal(f.latest().handoffs.at(-1)!.status, 'awaiting_accept');
-  assert.ok(f.latest().events.some((event) => /舊規劃者 session 已不存在/.test(event.text)));
+  assert.ok(f.latest().events.some((event) => /舊規劃者 session 已不存在/.test(formatLocalized(event.text, event.localization))));
   await f.rpc('accept', { handoffId: f.latest().handoffs.at(-1)!.id }, 'next', 2);
   assert.equal(f.latest().planner.paneId, 'next');
   assert.equal(f.latest().handoffs.at(-1)!.from.session?.value, 'session-planner', 'history retains the original planner identity');
@@ -304,4 +307,46 @@ test('disposing during initialization releases both the owner and endpoint; conf
   const next = new CollaborationService({ storageDir: directory, cliPath: '/extension/dist/herdr-collab.cjs', host: f.host });
   await next.initialize();
   await next.dispose();
+});
+
+test('persisted system events follow the current locale while user text and report evidence stay unchanged', async (t) => {
+  const previous = getLocale();
+  t.after(() => setLocale(previous));
+  setLocale('zh-tw');
+  const f = await fixture(t);
+  const original = 'Created a task for this tab.';
+  await f.service.recordUserMessage(f.task.id, 'planner', original);
+  const memoryTitle = '保留 {0} 和 $&';
+  await f.service.addMemoryReference(f.task.id, { id: 42, title: memoryTitle, text: '原始記憶內容' });
+  const request = await f.service.delegateFromUser(f.task.id, 'worker', '不要改變這份工作文字 {0}');
+  await f.report(request.id, 'completed', '原始回報：測試 12/12 通過。');
+  const disk = JSON.parse(await fs.readFile(path.join(f.directory, 'tasks.json'), 'utf8')).tasks[0] as CollaborationTask;
+  const originalSnapshot = JSON.stringify(disk);
+  const created = disk.events.find((event) => event.type === 'task_created')!;
+  const saved = disk.events.find((event) => event.type === 'memory_saved')!;
+  const user = disk.events.find((event) => event.type === 'user_message')!;
+  const report = disk.events.find((event) => event.type === 'reported')!;
+  assert.equal(created.text, original, 'persist the canonical English fallback');
+  assert.equal(formatLocalized(created.text, created.localization), '已建立此 tab 的任務。');
+  assert.equal(formatLocalized(saved.text, saved.localization), `已保存 Claude-mem 記憶 #42：${memoryTitle}`);
+  assert.equal(user.localization, undefined);
+  assert.equal(formatLocalized(user.text, user.localization), original, 'text equal to a translation key is still user data');
+  setLocale('en');
+  assert.equal(formatLocalized(created.text, created.localization), original);
+  assert.equal(formatLocalized(saved.text, saved.localization), `Saved Claude-mem memory #42: ${memoryTitle}`);
+  assert.equal(report.localization, undefined);
+  assert.equal(formatLocalized(report.text, report.localization), '原始回報：測試 12/12 通過。');
+  assert.equal(JSON.stringify(disk), originalSnapshot, 'changing presentation language never rewrites historical evidence');
+});
+
+test('service errors follow locale without changing machine-readable codes or placeholder values', async (t) => {
+  const previous = getLocale();
+  t.after(() => setLocale(previous));
+  const f = await fixture(t);
+  setLocale('en');
+  await assert.rejects(f.rpc('report', {}, 'worker'), { code: 'invalid_argument', message: 'Required: requestId.' });
+  await assert.rejects(f.service.delegateFromUser(f.task.id, 'worker', ''), { code: 'empty_prompt', message: 'Delegation text cannot be empty.' });
+  setLocale('zh-tw');
+  await assert.rejects(f.rpc('report', {}, 'worker'), { code: 'invalid_argument', message: '需要 requestId。' });
+  await assert.rejects(f.service.delegateFromUser(f.task.id, 'worker', ''), { code: 'empty_prompt', message: '派工內容不能為空。' });
 });

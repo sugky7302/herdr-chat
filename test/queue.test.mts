@@ -6,7 +6,8 @@ import { build } from 'esbuild';
 // 使用真正的 Controller 方法；只替代 VS Code 載入與對話更新邊界。
 const bundle = await build({
   absWorkingDir: fileURLToPath(new URL('..', import.meta.url)),
-  entryPoints: ['src/controller.ts'], bundle: true, write: false, platform: 'node', format: 'esm', logLevel: 'silent',
+  stdin: { contents: 'export { Controller } from "./src/controller.ts"; export { setLocale } from "./src/l10n.ts";', resolveDir: fileURLToPath(new URL('..', import.meta.url)), loader: 'ts' },
+  bundle: true, write: false, platform: 'node', format: 'esm', logLevel: 'silent',
   plugins: [{
     name: 'vscode-test-host',
     setup(builder) {
@@ -15,7 +16,8 @@ const bundle = await build({
     },
   }],
 });
-const { Controller } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+const { Controller, setLocale } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+setLocale('zh-tw');
 
 interface Item { id: number; text: string; attachments: string[]; model?: string; effort?: string }
 function setup(entries: [string, Item[]][]) {

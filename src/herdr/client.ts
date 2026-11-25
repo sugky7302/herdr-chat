@@ -1,3 +1,4 @@
+import { t } from '../l10n.ts';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -43,7 +44,7 @@ export class HerdrClient {
         else resolve(value as T);
       };
       const timer = setTimeout(
-        () => finish(new HerdrError('timeout', `herdr ${method} 逾時（${timeoutMs} ms）`)),
+        () => finish(new HerdrError('timeout', t("herdr {0} timed out ({1} ms)", method, timeoutMs))),
         timeoutMs,
       );
       socket.setEncoding('utf8');
@@ -62,12 +63,12 @@ export class HerdrClient {
             continue;
           }
           if (message.id !== id) continue;
-          if (message.error) finish(new HerdrError(message.error.code ?? 'error', message.error.message ?? 'herdr 錯誤'));
+          if (message.error) finish(new HerdrError(message.error.code ?? 'error', message.error.message ?? t("herdr error")));
           else finish(null, message.result as T);
         }
       });
-      socket.on('error', (err) => finish(new HerdrError('connection', `無法連線到 herdr：${err.message}`)));
-      socket.on('close', () => finish(new HerdrError('connection', `herdr 在回應 ${method} 前關閉連線`)));
+      socket.on('error', (err) => finish(new HerdrError('connection', t("Could not connect to herdr: {0}", err.message))));
+      socket.on('close', () => finish(new HerdrError('connection', t("herdr closed the connection before responding to {0}", method))));
     });
   }
 

@@ -1,0 +1,77 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
+
+const root = fileURLToPath(new URL('..', import.meta.url));
+const bundle = await build({
+  absWorkingDir: root, entryPoints: ['src/extension.ts'], bundle: true, write: false,
+  platform: 'node', format: 'esm', logLevel: 'silent',
+  plugins: [{
+    name: 'locale-activation-host',
+    setup(builder) {
+      builder.onResolve({ filter: /^vscode$/ }, () => ({ path: 'vscode', namespace: 'locale-host' }));
+      builder.onResolve({ filter: /^\.\/controller$/ }, (args) => args.importer.endsWith('/src/extension.ts') ? { path: 'controller', namespace: 'locale-host' } : undefined);
+      builder.onResolve({ filter: /^\.\/claudeUsage$/ }, (args) => args.importer.endsWith('/src/extension.ts') ? { path: 'usage', namespace: 'locale-host' } : undefined);
+      builder.onLoad({ filter: /.*/, namespace: 'locale-host' }, (args) => {
+        const common = 'const state = () => globalThis.__herdrLocaleHost;';
+        if (args.path === 'controller') return { loader: 'ts', resolveDir: root, contents: `
+          import {getLocale} from './src/l10n.ts';
+          ${common}
+          export class Controller {
+            constructor() { state().constructedLocale = getLocale(); }
+            dispose() {}
+            async refresh() {}
+          }
+          export function describe(error) { return String(error); }
+        ` };
+        if (args.path === 'usage') return { loader: 'js', contents: 'export async function install() { throw new Error("Unexpected settings write"); } export async function uninstall() { throw new Error("Unexpected settings write"); }' };
+        return { loader: 'js', contents: `
+          ${common}
+          const disposable = () => ({dispose() {}});
+          export const env = {get language() {return state().language;}};
+          export const workspace = {workspaceFolders: []};
+          export const Uri = {joinPath(base, ...parts) {const fsPath = [base.fsPath, ...parts].join('/'); return {fsPath, toString() {return fsPath;}};}};
+          export const window = {
+            registerWebviewViewProvider(id, provider) {state().provider = provider; return disposable();},
+            async showInformationMessage(...args) {state().notices.push(args); return undefined;}
+          };
+          export const commands = {registerCommand(id, handler) {state().commands[id] = handler; return disposable();}};
+        ` };
+      });
+    },
+  }],
+});
+const { activate } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+
+test('activation reads vscode.env.language before controller setup and passes that locale to the webview', async () => {
+  const globals = globalThis as typeof globalThis & { __herdrLocaleHost?: any };
+  try {
+    for (const language of ['en', 'zh-tw', 'zh-Hant-HK', 'ja']) {
+      const state: any = { language, notices: [], commands: {} };
+      globals.__herdrLocaleHost = state;
+      const uri = (fsPath: string) => ({ fsPath, toString: () => fsPath });
+      const context = {
+        storageUri: uri('/test/workspace-storage'), globalStorageUri: uri('/test/global-storage'), extensionUri: uri('/test/extension'),
+        workspaceState: {}, globalState: {}, subscriptions: [],
+      };
+      activate(context);
+      const webview: any = { cspSource: 'vscode-test:', asWebviewUri: (value: any) => value.toString(), onDidReceiveMessage() {} };
+      state.provider.resolveWebviewView({ webview, onDidDispose() {} });
+      const traditional = language.startsWith('zh');
+      assert.equal(state.constructedLocale, traditional ? 'zh-tw' : 'en');
+      assert.match(webview.html, new RegExp(`<html lang="${traditional ? 'zh-TW' : 'en'}">`));
+      assert.match(webview.html, /Content-Security-Policy/);
+      assert.match(webview.html, /webview\.js/);
+      await state.commands['herdr.enableClaudeUsage']();
+      const [question, options, action] = state.notices[0];
+      if (traditional) {
+        assert.match(question, /啟用 Claude/); assert.match(action, /啟用/);
+      } else {
+        assert.doesNotMatch(`${question} ${options.detail} ${action}`, /\p{Script=Han}/u);
+        assert.match(question, /Claude/);
+      }
+      for (const subscription of context.subscriptions as { dispose(): void }[]) subscription.dispose();
+    }
+  } finally { delete globals.__herdrLocaleHost; }
+});

@@ -4,6 +4,12 @@ export type CollaborationRole = 'planner' | 'worker';
 export type RequestStatus = 'sending' | 'running' | 'awaiting_report' | 'needs_input' | 'completed' | 'failed' | 'wait_expired';
 export type TaskStatus = 'active' | 'handoff_pending' | 'archived';
 
+/** Store extension-owned copy independently of the language used when the event was created. */
+export interface LocalizedMessage {
+  message: string;
+  args?: (string | number | boolean | null | undefined)[];
+}
+
 /** A Herdr pane can be reused; retain its original agent/session as well as its location. */
 export interface AgentIdentity {
   paneId: string;
@@ -31,6 +37,7 @@ export interface CollaborationRequest {
   replies: { text: string; at: string; by: AgentIdentity }[];
   runtimeStatus?: string;
   error?: string;
+  errorLocalization?: LocalizedMessage;
 }
 
 export interface CollaborationEvent {
@@ -38,6 +45,7 @@ export interface CollaborationEvent {
   at: string;
   type: 'task_created' | 'planner_selected' | 'planner_enabled' | 'user_message' | 'checkpoint_created' | 'task_archived' | 'agent_created' | 'delegated' | 'state_changed' | 'reported' | 'answered' | 'handoff_started' | 'handoff_sent' | 'handoff_accepted' | 'handoff_delta' | 'handoff_failed' | 'memory_saved';
   text: string;
+  localization?: LocalizedMessage;
   requestId?: string;
   paneId?: string;
 }
@@ -54,6 +62,7 @@ export interface Handoff {
   /** Event watermark included in the checkpoint; subsequent results are sent after acceptance. */
   checkpointEventId?: string;
   error?: string;
+  errorLocalization?: LocalizedMessage;
 }
 
 export interface CollaborationTask {
@@ -67,7 +76,7 @@ export interface CollaborationTask {
   status: TaskStatus;
   generation: number;
   enabled: boolean;
-  plannerDelivery?: { status: 'sending' | 'sent' | 'uncertain'; at: string; error?: string };
+  plannerDelivery?: { status: 'sending' | 'sent' | 'uncertain'; at: string; error?: string; errorLocalization?: LocalizedMessage };
   planner: AgentIdentity;
   participants: AgentIdentity[];
   requests: CollaborationRequest[];

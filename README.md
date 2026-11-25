@@ -2,7 +2,21 @@
 
 在 VS Code 右側邊欄與 Herdr agent 對話，查看同一個問題的分工、等待、回報與記憶。
 
-**0.3.0：一個 tab 就是一個問題，pane 是參與這個問題的 agent。** 可以讓 Claude 擔任規劃者，建立或呼叫其他 agent；也可以在 Claude 無法繼續時，把規劃工作交接給另一個 agent。
+**0.4.0：介面會自動跟隨 VS Code 的顯示語言，支援繁體中文與英文。** 一個 tab 就是一個問題，pane 是參與這個問題的 agent。可以讓 Claude 擔任規劃者，建立或呼叫其他 agent；也可以在 Claude 無法繼續時，把規劃工作交接給另一個 agent。
+
+## 顯示語言
+
+擴充功能啟動時讀取 `vscode.env.language`，將同一個語系傳給側邊欄 webview，不需要另設 Herdr 語言選項。
+
+| VS Code 顯示語言 | Herdr 介面 |
+| --- | --- |
+| 繁體中文（`zh-tw`） | 繁體中文 |
+| 英文（`en`） | 英文 |
+| 目前沒有翻譯的其他語言 | 英文 |
+
+在 VS Code 命令選擇區執行 **Configure Display Language**（設定顯示語言），選擇語言並依 VS Code 提示重新啟動，Herdr 就會自動套用。日期、時間與數字也使用介面的語系格式。
+
+命令名稱、設定說明、按鈕、無障礙標籤、提示、錯誤，以及協作、記憶與交接畫面都已加入翻譯。新產生的協作系統事件保存訊息代號與參數，重新開啟後可依當前語系顯示；使用者對話、agent 回覆、記憶內容、自訂名稱、原生命令說明及舊版已保存的原文紀錄維持原樣。
 
 ## 安裝與準備
 
@@ -181,5 +195,13 @@ node dist/herdr-collab.cjs --help
 ```
 
 自動化測試涵蓋 task 狀態、明確回報、交接、session 核對、owner 鎖、CLI 與本機 HTTP transport、Claude-mem receipt 驗證，以及 webview 的範圍、草稿、IME、佇列與捲動。Herdr host 與 Claude-mem HTTP 回應使用測試替身；這不等於已完成真實 Herdr、Claude／Codex、Claude-mem 與 VS Code 視窗的端到端驗證。
+
+### 維護翻譯
+
+執行中的介面文字共用 `src/l10n.ts`。英文原句是訊息代號與回退文字；繁中對照分別存放在 `src/l10n/host.ts`、`src/l10n/services.ts`、`src/l10n/webview.ts`，建置時會打包進 extension 與 webview，不需要額外下載翻譯。
+
+新增介面文字時使用完整句子與索引參數，例如 `t('Rename {0}', name)`，並在所屬翻譯表新增對照。翻譯應在顯示時取得，避免在語系初始化前計算模組層級的顯示字串。使用者輸入和原生 agent 文字直接顯示，不應當作翻譯代號。
+
+VS Code 的靜態命令與設定說明使用標準 `package.nls.json`（英文）和 `package.nls.zh-tw.json`（繁中），由 `package.json` 的 `%key%` 引用。新增語言時需同時增加這兩部分的翻譯與語系選擇規則。測試會檢查訊息代號、參數一致性、manifest 引用、語系啟動順序，以及英文／繁中 webview 的行為。
 
 版本變更見 [CHANGELOG.md](CHANGELOG.md)。

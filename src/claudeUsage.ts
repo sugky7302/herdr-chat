@@ -1,3 +1,4 @@
+import { t } from './l10n.ts';
 // Claude 的方案用量（5 小時、7 天）。
 //
 // Claude Code 只把用量交給 statusline 指令（stdin 的 JSON 中 rate_limits 欄位），不寫進對話紀錄。
@@ -31,8 +32,8 @@ export interface ClaudeStatus {
 
 function scriptBody(): string {
   return `#!/bin/sh
-# herdr-vscode：保存 Claude Code 交給 statusline 的資料，再交給原本的 statusline 指令。
-# 還原方式：在 VS Code 執行「herdr: 停用 Claude 用量顯示」。
+# herdr-vscode: save Claude Code usage, then forward it to the original statusline command.
+# Restore the original settings with the herdr.disableClaudeUsage command in VS Code.
 input=$(cat)
 dir="${STATUS_DIR}"
 mkdir -p "$dir" 2>/dev/null
@@ -48,7 +49,7 @@ async function readSettings(): Promise<Record<string, any>> {
     return JSON.parse(await fs.readFile(SETTINGS, 'utf8'));
   } catch (error: any) {
     if (error?.code === 'ENOENT') return {};
-    throw new Error(`無法讀取 ${SETTINGS}：${error.message}`);
+    throw new Error(t("Could not read {0}: {1}", SETTINGS, error.message));
   }
 }
 

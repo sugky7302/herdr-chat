@@ -6,6 +6,9 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ClaudeMemClient, memoryFingerprint, resolveClaudeMemConnection } from '../src/memory/claudeMem.ts';
+import { getLocale, setLocale } from '../src/l10n.ts';
+
+setLocale('zh-tw');
 
 test('worker 位址沿用 settings/env，使用每個使用者的預設 port，不讀 provider token', async (t) => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'herdr-memory-'));
@@ -80,4 +83,28 @@ test('重試同一份草稿使用相同 fingerprint；修改內容會產生新 r
   assert.equal(original, memoryFingerprint('a', 'op-1', '標題', '內容'));
   assert.notEqual(original, memoryFingerprint('a', 'op-1', '標題', '新內容'));
   assert.notEqual(original, memoryFingerprint('b', 'op-1', '標題', '內容'));
+});
+
+test('memory errors use the current locale and interpolate HTTP status without translating submitted content', async (t) => {
+  const previous = getLocale();
+  t.after(() => setLocale(previous));
+  const bodies: any[] = [];
+  const server = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    bodies.push(JSON.parse(Buffer.concat(chunks).toString()));
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unavailable' }));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'herdr-memory-locales-'));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const client = new ClaudeMemClient(() => ({ baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`, environment: {}, homeDir }));
+  const draft = { title: 'Enter a memory title.', text: '不要翻譯 {0} /repo/中文。', cwd: '/repo/中文' };
+  setLocale('en');
+  await assert.rejects(client.save(draft), { message: 'Claude-mem could not complete the operation (HTTP 503). Your draft is preserved.' });
+  setLocale('zh-tw');
+  await assert.rejects(client.save(draft), { message: 'Claude-mem 暫時無法完成操作（HTTP 503）。內容已保留。' });
+  assert.deepEqual(bodies, [draft, draft]);
 });

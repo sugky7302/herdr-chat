@@ -1,3 +1,4 @@
+import { t } from './l10n.ts';
 import type * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -72,7 +73,7 @@ export class Commands {
     await io.keys(['esc']);
     await sleep(150);
     await io.keys(['backspace']);
-    if (found.size < 5) throw new Error('沒有讀到指令清單。請確認 agent 停在輸入畫面。');
+    if (found.size < 5) throw new Error(t("No command list was found. Make sure the agent is at its input prompt."));
     const all = { ...this.memento.get<Record<string, CommandEntry[]>>(HARVEST_KEY, {}) };
     all[kind] = [...found].map(([name, description]) => ({ name, description })).sort((a, b) => a.name.localeCompare(b.name));
     await this.memento.update(HARVEST_KEY, all);

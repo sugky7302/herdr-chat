@@ -1,3 +1,4 @@
+import { t } from '../l10n.ts';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -45,7 +46,7 @@ export async function resolveClaudeMemConnection(config: ClaudeMemConfig = {}): 
     settings = { ...nested, ...value };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw new Error('無法讀取 Claude-mem 設定，請檢查 herdr.claudeMemSettingsPath 與設定檔格式。');
+      throw new Error(t("Could not read Claude-mem settings. Check herdr.claudeMemSettingsPath and the settings file format."));
     }
   }
   const setting = (key: string) => typeof settings[key] === 'string' ? String(settings[key]).trim() : '';
@@ -56,17 +57,17 @@ export async function resolveClaudeMemConnection(config: ClaudeMemConfig = {}): 
   const uid = config.uid ?? (typeof process.getuid === 'function' ? process.getuid() : 0);
   const port = configured('CLAUDE_MEM_WORKER_PORT') || String(37700 + uid % 100);
   if (!override && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) {
-    throw new Error('Claude-mem worker port 必須介於 1 與 65535。');
+    throw new Error(t("The Claude-mem worker port must be between 1 and 65535."));
   }
   const address = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
   let url: URL;
   try { url = new URL(override || `http://${address}:${port}`); }
-  catch { throw new Error('Claude-mem worker URL 格式不正確。'); }
+  catch { throw new Error(t("The Claude-mem worker URL is invalid.")); }
   if (url.username || url.password || url.search || url.hash || !['http:', 'https:'].includes(url.protocol)) {
-    throw new Error('Claude-mem URL 請使用 http(s) 位址，不要包含帳密、查詢參數或片段。');
+    throw new Error(t("Use an HTTP(S) URL for Claude-mem without credentials, query parameters, or a fragment."));
   }
   const loopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname);
-  if (!loopback && url.protocol !== 'https:') throw new Error('遠端 Claude-mem worker 請使用 HTTPS，或本機 port forwarding。');
+  if (!loopback && url.protocol !== 'https:') throw new Error(t("Use HTTPS for a remote Claude-mem worker, or forward a local port."));
   // The file-owned token belongs to the configured worker, not every service on localhost.
   let workerOrigin: string | undefined;
   try { workerOrigin = new URL(workerUrl || `http://${address}:${port}`).origin; } catch { /* No token for an invalid configured origin. */ }
@@ -98,30 +99,30 @@ export class ClaudeMemClient {
         redirect: 'error', signal: AbortSignal.timeout(connection.timeoutMs),
       });
     } catch {
-      throw new Error('無法連線到 Claude-mem worker。內容已保留，可檢查 worker 與 herdr.claudeMemUrl 後重試。');
+      throw new Error(t("Could not connect to the Claude-mem worker. Your draft is preserved. Check the worker and herdr.claudeMemUrl, then try again."));
     }
     let result: unknown;
     try { result = await response.json(); }
-    catch { throw new Error(`Claude-mem 回傳無效內容（HTTP ${response.status}），尚未確認保存成功。`); }
+    catch { throw new Error(t('Claude-mem returned invalid content (HTTP {0}). Saving has not been confirmed.', response.status)); }
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) throw new Error('Claude-mem 拒絕存取，請檢查 worker 的 API token 與允許的連線設定。');
-      if (response.status === 404) throw new Error('這個 Claude-mem worker 沒有提供所需 API，請確認安裝版本與 worker URL。');
-      throw new Error(`Claude-mem 暫時無法完成操作（HTTP ${response.status}）。內容已保留。`);
+      if (response.status === 401 || response.status === 403) throw new Error(t("Claude-mem denied access. Check the worker API token and allowed connection settings."));
+      if (response.status === 404) throw new Error(t("This Claude-mem worker does not provide the required API. Check the installed version and worker URL."));
+      throw new Error(t('Claude-mem could not complete the operation (HTTP {0}). Your draft is preserved.', response.status));
     }
     return result;
   }
 
   async save(input: MemoryInput): Promise<SavedMemory> {
-    if (!input.text.trim()) throw new Error('請輸入要保存的記憶內容。');
-    if (!input.title.trim()) throw new Error('請輸入記憶標題。');
+    if (!input.text.trim()) throw new Error(t("Enter the memory content to save."));
+    if (!input.title.trim()) throw new Error(t("Enter a memory title."));
     const result = await this.request('/api/memory/save', {
       text: input.text.trim(), title: input.title.trim(), cwd: input.cwd,
       ...(input.project ? { project: input.project } : {}),
       ...(input.metadata ? { metadata: input.metadata } : {}),
     }) as Record<string, unknown> | null;
     if (result?.success !== true || !Number.isSafeInteger(result.id) || Number(result.id) < 1) {
-      if (result?.reason === 'project_excluded') throw new Error('此專案已被 Claude-mem 排除，記憶尚未保存。');
-      throw new Error('Claude-mem 尚未確認保存成功。內容已保留，請檢查 worker 後重試。');
+      if (result?.reason === 'project_excluded') throw new Error(t("This project is excluded by Claude-mem. The memory has not been saved."));
+      throw new Error(t("Claude-mem has not confirmed saving. Your draft is preserved. Check the worker and try again."));
     }
     return {
       id: Number(result.id), title: typeof result.title === 'string' ? result.title : input.title.trim(),
@@ -130,9 +131,9 @@ export class ClaudeMemClient {
   }
 
   async get(id: number): Promise<SavedMemory> {
-    if (!Number.isSafeInteger(id) || id < 1) throw new Error('記憶 ID 不正確。');
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error(t("The memory ID is invalid."));
     const result = await this.request(`/api/observation/${id}`) as Record<string, unknown> | null;
-    if (!result || result.id !== id || typeof result.narrative !== 'string') throw new Error('找不到這筆記憶的內容。');
+    if (!result || result.id !== id || typeof result.narrative !== 'string') throw new Error(t("The memory content was not found."));
     return { id, title: String(result.title ?? ''), project: String(result.project ?? ''), text: result.narrative };
   }
 }

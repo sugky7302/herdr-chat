@@ -1,6 +1,7 @@
 import type { AgentView, ChatMessage, FromWebview, ProjectState, TabView, ToWebview } from '../src/shared';
 import type { AgentIdentity, CollaborationRequest, CollaborationTask, RequestStatus } from '../src/collaboration/types';
 import type { ChatHost, ChatView } from './chat';
+import { formatLocalized, getIntlLocale, t } from '../src/l10n.ts';
 
 export type TaskPage = 'chat' | 'collaboration' | 'memory';
 type Target = { paneId: string } | { presetId: string };
@@ -54,19 +55,19 @@ interface DispatchDraft {
 }
 
 const REQUEST_LABELS: Record<RequestStatus, string> = {
-  sending: '正在派送',
-  running: '執行中',
-  awaiting_report: '等待明確回報',
-  needs_input: '等待規劃者回應',
-  completed: '已回報完成',
-  failed: '派送失敗',
-  wait_expired: '等待逾時 · 結果未知',
+  sending: "Dispatching",
+  running: "Running",
+  awaiting_report: "Awaiting explicit report",
+  needs_input: "Awaiting planner response",
+  completed: "Reported complete",
+  failed: "Dispatch failed",
+  wait_expired: "Wait expired · result unknown",
 };
 
 function requestLabel(request: CollaborationRequest): string {
-  if (request.status === 'failed') return request.report?.status === 'failed' ? '已回報失敗' : '派送失敗';
-  if (request.status === 'needs_input' && request.report?.status !== 'needs_input') return '等待原生權限或選單';
-  return REQUEST_LABELS[request.status];
+  if (request.status === 'failed') return request.report?.status === 'failed' ? t("Reported failure") : t("Dispatch failed");
+  if (request.status === 'needs_input' && request.report?.status !== 'needs_input') return t("Awaiting native approval or menu");
+  return t(REQUEST_LABELS[request.status]);
 }
 
 function identityName(agent: AgentIdentity): string {
@@ -74,12 +75,12 @@ function identityName(agent: AgentIdentity): string {
 }
 
 function paneName(agent: AgentView): string {
-  return agent.label || agent.name || agent.kind || '終端機';
+  return agent.label || agent.name || agent.kind || t("Terminal");
 }
 
 function timeLabel(at: string): string {
   const date = new Date(at);
-  return Number.isNaN(date.getTime()) ? at : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? at : date.toLocaleString(getIntlLocale());
 }
 
 /** One tab is one task. Pane selection only changes the conversation page. */
@@ -110,7 +111,7 @@ export class TaskView {
     for (const draft of Object.values(ui.memoryDrafts)) {
       if (draft.operationId) {
         delete draft.operationId;
-        draft.error = '上次保存的回應尚未確認，草稿已保留；請先核對記憶紀錄再重試。';
+        draft.error = t("The previous save has not been confirmed. Your draft is preserved; check the memory records before retrying.");
       }
     }
   }
@@ -136,8 +137,8 @@ export class TaskView {
   readOnlyReason(paneId: string): string | undefined {
     const task = this.tasks.find((item) => item.participants.some((agent) => agent.paneId === paneId));
     if (!task?.enabled) return undefined;
-    if (task.planner.paneId === paneId) return task.status === 'handoff_pending' ? '原規劃已暫停，等待新規劃者接手；草稿保留。' : undefined;
-    if (task.handoffs.some((handoff) => handoff.status === 'accepted' && handoff.from.paneId === paneId)) return '原規劃者的對話保留為唯讀歷史，仍可保存成記憶。';
+    if (task.planner.paneId === paneId) return task.status === 'handoff_pending' ? t("The previous planner is paused while awaiting handoff. Your draft is preserved.") : undefined;
+    if (task.handoffs.some((handoff) => handoff.status === 'accepted' && handoff.from.paneId === paneId)) return t("The previous planner’s conversation is read-only history. You can still save messages as memory.");
     return undefined;
   }
 
@@ -164,7 +165,7 @@ export class TaskView {
   mount(tab: TabView, paneId?: string): HTMLElement {
     const { h } = this.host;
     this.heading = h('div', { class: 'task-heading' });
-    this.navigation = h('div', { class: 'task-navigation', role: 'tablist', 'aria-label': '問題內容' });
+    this.navigation = h('div', { class: 'task-navigation', role: 'tablist', 'aria-label': t("Task content") });
     this.handoffSlot = h('div', { class: 'task-handoff-slot' });
     this.memorySlot = h('div', { class: 'task-memory-slot' });
     this.feedback = h('div', { class: 'task-feedback', role: 'status', 'aria-live': 'polite', hidden: true });
@@ -221,19 +222,19 @@ export class TaskView {
     const planner = task?.enabled ? task.planner : undefined;
     const delivery = task?.plannerDelivery;
     const selected = tab.agents.find((agent) => agent.paneId === this.paneId() && agent.kind);
-    const plannerText = task?.status === 'archived' ? `已封存 · ${planner ? `最後規劃者：${identityName(planner)}` : '未啟用協作'}` : planner
-      ? pending ? `原規劃者：${identityName(planner)} · 交接暫停` : `規劃者：${identityName(planner)}`
-      : '尚未啟用協作規劃';
+    const plannerText = task?.status === 'archived' ? t("Archived · {0}", planner ? t("Last planner: {0}", identityName(planner)) : t("Collaboration not enabled")) : planner
+      ? pending ? t("Previous planner: {0} · paused for handoff", identityName(planner)) : t("Planner: {0}", identityName(planner))
+      : t("No collaboration planner enabled");
     const toolbar = h('div', { class: 'toolbar task-title' },
-      h('button', { class: 'icon-button', title: '歷史紀錄', 'aria-label': '歷史紀錄', onclick: () => this.host.history() }, this.host.icon('back')),
+      h('button', { class: 'icon-button', title: t("History"), 'aria-label': t("History"), onclick: () => this.host.history() }, this.host.icon('back')),
       h('h2', { title: this.host.title(tab) }, this.host.title(tab)),
       h('div', { class: 'spacer' }),
-      task?.status !== 'archived' ? h('button', { class: 'icon-button', title: '重新命名問題', 'aria-label': '重新命名問題', onclick: () => this.host.send({ type: 'renameTab', tabId: tab.tabId }) }, this.host.icon('edit')) : null);
+      task?.status !== 'archived' ? h('button', { class: 'icon-button', title: t("Rename task"), 'aria-label': t("Rename task"), onclick: () => this.host.send({ type: 'renameTab', tabId: tab.tabId }) }, this.host.icon('edit')) : null);
     const plannerRow = h('div', { class: 'task-planner' }, h('span', { class: 'task-planner-label' }, plannerText));
     if (planner && delivery && task?.status !== 'archived' && !pending) plannerRow.append(h('span', { class: 'task-planner-delivery', 'data-delivery-status': delivery.status },
-      delivery.status === 'sending' ? '協作入口傳送中' : delivery.status === 'sent' ? '協作入口已送出' : '協作入口傳送結果未確認'));
+      delivery.status === 'sending' ? t("Sending collaboration commands") : delivery.status === 'sent' ? t("Collaboration commands sent") : t("Collaboration command delivery unconfirmed")));
     if (task?.status === 'archived') {
-      plannerRow.append(h('span', { class: 'muted' }, '唯讀紀錄'));
+      plannerRow.append(h('span', { class: 'muted' }, t("Read-only history")));
     } else if (!planner) {
       plannerRow.append(h('button', {
         class: 'secondary small', disabled: !selected || Boolean(this.plannerOperations[tab.tabId]),
@@ -244,31 +245,31 @@ export class TaskView {
           this.host.send({ type: 'assignPlanner', tabId: tab.tabId, paneId: selected.paneId, operationId });
           this.refreshCurrent();
         },
-      }, this.plannerOperations[tab.tabId] ? '啟用中…' : selected ? `以 ${paneName(selected)} 規劃` : '先新增 agent'));
+      }, this.plannerOperations[tab.tabId] ? t("Enabling…") : selected ? t("Use {0} as planner", paneName(selected)) : t("Add an agent first")));
     } else {
-      plannerRow.append(h('button', { class: 'secondary small', disabled: delivery?.status === 'sending' && !pending, onclick: () => this.openHandoff() }, pending ? '查看交接' : '交接規劃者'));
+      plannerRow.append(h('button', { class: 'secondary small', disabled: delivery?.status === 'sending' && !pending, onclick: () => this.openHandoff() }, pending ? t("View handoff") : t("Hand off planner")));
     }
     this.heading!.replaceChildren(toolbar, plannerRow);
     if (pending) {
       const handoff = task.handoffs.at(-1);
       this.heading!.append(h('div', { class: 'task-notice', role: 'status' },
-        handoff?.status === 'failed' ? '交接失敗，舊規劃仍暫停。可重新選擇接手者；worker 持續執行，回覆暫存於本問題。'
-          : `等待${handoff?.target ? ` ${identityName(handoff.target)} ` : '新規劃者'}接手確認。Worker 持續執行，回覆暫存於本問題。`));
+        handoff?.status === 'failed' ? t("Handoff failed. The previous planner remains paused. Choose another successor; workers continue and their replies are retained in this task.")
+          : t("Waiting for {0} to accept. Workers continue and their replies are retained in this task.", handoff?.target ? identityName(handoff.target) : t("New planner"))));
     } else if (delivery?.status === 'uncertain' && task?.status !== 'archived') {
       this.heading!.append(h('div', { class: 'task-notice task-delivery-uncertain', role: 'alert' },
-        h('p', {}, '協作入口的傳送結果未確認。請複製入口貼到原規劃者，執行 status 核對目前任務。'),
-        delivery.error ? h('p', { class: 'muted' }, delivery.error) : null,
-        h('button', { class: 'secondary small', onclick: () => this.host.send({ type: 'copyCollaborationPrompt', tabId: tab.tabId }) }, '複製協作入口')));
+        h('p', {}, t("Delivery of the collaboration commands is unconfirmed. Copy them to the original planner and run status to check the task.")),
+        delivery.error ? h('p', { class: 'muted' }, formatLocalized(delivery.error, delivery.errorLocalization)) : null,
+        h('button', { class: 'secondary small', onclick: () => this.host.send({ type: 'copyCollaborationPrompt', tabId: tab.tabId }) }, t("Copy collaboration commands"))));
     }
   }
 
   private renderNavigation(): void {
     const { h } = this.host;
-    const items: [TaskPage, string][] = [['chat', '對話'], ['collaboration', '協作'], ['memory', '記憶']];
+    const items: [TaskPage, string][] = [['chat', t("Chat")], ['collaboration', t("Collaboration")], ['memory', t("Memory")]];
     this.navigation!.replaceChildren(...items.map(([page, title]) => h('button', {
       id: `task-tab-${page}`, class: 'task-tab', type: 'button', role: 'tab',
       'aria-selected': String(this.page() === page), 'aria-controls': 'task-panel', 'data-task-page': page,
-      disabled: page === 'chat' && this.task()?.status === 'archived', title: page === 'chat' && this.task()?.status === 'archived' ? '原 pane 已關閉' : undefined,
+      disabled: page === 'chat' && this.task()?.status === 'archived', title: page === 'chat' && this.task()?.status === 'archived' ? t("The original pane is closed") : undefined,
       onclick: () => this.setPage(page),
     }, title)));
     this.content!.id = 'task-panel';
@@ -290,7 +291,7 @@ export class TaskView {
         this.contentKey = key;
         this.content!.replaceChildren(this.renderAgentSwitcher());
         if (paneId) this.content!.append(this.host.paneToolbar(paneId), ...chat.mount(paneId));
-        else this.content!.append(h('p', { class: 'muted pad' }, '在這個問題新增 agent，即可開始對話。'));
+        else this.content!.append(h('p', { class: 'muted pad' }, t("Add an agent to this task to start a conversation.")));
         this.host.send({ type: 'openPane', paneId: paneId || null });
       } else {
         this.content!.querySelector('.task-agents')?.replaceWith(this.renderAgentSwitcher());
@@ -313,19 +314,19 @@ export class TaskView {
   private renderAgentSwitcher(): HTMLElement {
     const { h } = this.host;
     const task = this.task();
-    const labels: Record<string, string> = { working: '執行中', blocked: '等待操作', idle: '閒置', done: '原生回合結束', unknown: '狀態不明', shell: '終端機' };
-    return h('div', { class: 'task-agents', 'aria-label': '切換對話 agent' },
+    const labels: Record<string, string> = { working: t("Running"), blocked: t("Awaiting action"), idle: t("Idle"), done: t("Native turn ended"), unknown: t("Unknown state"), shell: t("Terminal") };
+    return h('div', { class: 'task-agents', 'aria-label': t("Switch conversation agent") },
       ...this.tab!.agents.map((agent) => {
-        let role = task?.enabled && task.planner.paneId === agent.paneId ? task.status === 'handoff_pending' ? '原規劃者 · 交接暫停' : '規劃者' : '';
-        if (!role && task?.handoffs.some((handoff) => handoff.status === 'accepted' && handoff.from.paneId === agent.paneId)) role = '原規劃者';
+        let role = task?.enabled && task.planner.paneId === agent.paneId ? task.status === 'handoff_pending' ? t("Previous planner · handoff paused") : t("Planner") : '';
+        if (!role && task?.handoffs.some((handoff) => handoff.status === 'accepted' && handoff.from.paneId === agent.paneId)) role = t("Previous planner");
         const request = task ? [...task.requests].reverse().find((item) => item.target.paneId === agent.paneId) : undefined;
-        const status = request ? requestLabel(request) : labels[agent.status] ?? '狀態不明';
+        const status = request ? requestLabel(request) : labels[agent.status] ?? t("Unknown state");
         return h('button', {
           class: 'task-agent', 'data-agent-pane': agent.paneId, 'aria-pressed': String(this.paneId() === agent.paneId),
           title: `${paneName(agent)} · ${agent.paneId}`, onclick: () => this.host.openAgent(agent.paneId),
         }, h('span', { class: 'task-agent-name' }, paneName(agent)), h('span', { class: 'task-agent-state' }, [role, status].filter(Boolean).join(' · ')));
       }),
-      h('button', { class: 'secondary small task-add-agent', onclick: () => this.host.newAgent(this.tab!.tabId) }, '＋ agent'));
+      h('button', { class: 'secondary small task-add-agent', onclick: () => this.host.newAgent(this.tab!.tabId) }, t('＋ Add agent')));
   }
 
   openMemory(paneId: string, message: ChatMessage, messageIndex: number, selectedText?: string): void {
@@ -333,13 +334,13 @@ export class TaskView {
     if (!tab || !tab.agents.some((agent) => agent.paneId === paneId)) return;
     const existing = this.ui.memoryDrafts[tab.tabId];
     if (existing) {
-      this.feedbackByTab[tab.tabId] = { text: '已有尚未完成的記憶草稿；先保存或取消，再選擇另一段內容。' };
+      this.feedbackByTab[tab.tabId] = { text: t("A memory draft is already open. Save or cancel it before selecting another message.") };
       this.refreshCurrent();
       return;
     }
     const text = selectedText?.trim() || message.text;
     this.ui.memoryDrafts[tab.tabId] = {
-      title: text.split('\n').find((line) => line.trim())?.trim().slice(0, 80) || '問題決策', text,
+      title: text.split('\n').find((line) => line.trim())?.trim().slice(0, 80) || t("Task decision"), text,
       source: { paneId, messageIndex, role: message.role, text: message.text },
     };
     delete this.feedbackByTab[tab.tabId];
@@ -362,33 +363,33 @@ export class TaskView {
       input.addEventListener('input', () => { draft[name] = input.value; this.host.persist(); });
       return input;
     };
-    const title = bind('title', h('input', { id: 'task-memory-title', 'aria-label': '記憶標題', disabled: Boolean(draft.operationId) }));
-    const text = bind('text', h('textarea', { id: 'task-memory-text', rows: 5, 'aria-label': '記憶內容', disabled: Boolean(draft.operationId) }));
+    const title = bind('title', h('input', { id: 'task-memory-title', 'aria-label': t("Memory title"), disabled: Boolean(draft.operationId) }));
+    const text = bind('text', h('textarea', { id: 'task-memory-text', rows: 5, 'aria-label': t("Memory content"), disabled: Boolean(draft.operationId) }));
     const project = this.task()?.checkoutPath ?? this.host.state()?.worktrees.find((item) => item.current)?.path ?? this.host.state()?.repoRoot ?? '';
     const sourceAgent = tab.agents.find((agent) => agent.paneId === draft.source.paneId);
-    this.memorySlot!.append(h('section', { class: 'task-memory-editor', 'aria-label': '保存成記憶' },
-      h('div', { class: 'task-section-title' }, h('strong', {}, '保存成記憶'), h('button', {
+    this.memorySlot!.append(h('section', { class: 'task-memory-editor', 'aria-label': t("Save as memory") },
+      h('div', { class: 'task-section-title' }, h('strong', {}, t("Save as memory")), h('button', {
         class: 'link', disabled: Boolean(draft.operationId), onclick: () => { delete this.ui.memoryDrafts[tab.tabId]; this.host.persist(); this.refreshCurrent(); },
-      }, '取消')),
-      h('label', {}, '標題', title), h('label', {}, '內容', text),
-      h('div', { class: 'task-provenance' }, h('span', {}, `專案：${project}`), h('span', {}, `來源：${this.host.title(tab)} · ${sourceAgent ? paneName(sourceAgent) : draft.source.paneId} · 訊息 ${draft.source.messageIndex + 1}`)),
+      }, t("Cancel"))),
+      h('label', {}, t("Title"), title), h('label', {}, t("Content"), text),
+      h('div', { class: 'task-provenance' }, h('span', {}, t("Project: {0}", project)), h('span', {}, t("Source: {0} · {1} · message {2}", this.host.title(tab), sourceAgent ? paneName(sourceAgent) : draft.source.paneId, draft.source.messageIndex + 1))),
       draft.error ? h('div', { class: 'task-inline-error', role: 'alert' }, draft.error) : null,
       h('button', {
         class: 'task-save-memory', disabled: Boolean(draft.operationId), onclick: () => {
-          if (!draft.title.trim() || !draft.text.trim()) { draft.error = '請填寫標題與內容。'; this.refreshCurrent(); return; }
+          if (!draft.title.trim() || !draft.text.trim()) { draft.error = t("Enter a title and content."); this.refreshCurrent(); return; }
           draft.operationId = this.operationId(); delete draft.error;
           this.host.persist();
           this.host.send({ type: 'saveTaskMemory', tabId: tab.tabId, operationId: draft.operationId, title: draft.title.trim(), text: draft.text.trim(), source: draft.source });
           this.refreshCurrent();
         },
-      }, draft.operationId ? '保存中…' : '保存至 Claude-mem')));
+      }, draft.operationId ? t("Saving memory…") : t("Save to Claude-mem"))));
   }
 
   private choices(): { value: string; label: string }[] {
     const plannerId = this.task()?.planner.paneId;
     return [
-      ...(this.tab?.agents ?? []).filter((agent) => agent.kind && agent.status === 'idle' && agent.paneId !== plannerId).map((agent) => ({ value: `pane:${agent.paneId}`, label: `現有 ${paneName(agent)} · ${agent.paneId}（閒置）` })),
-      ...(this.host.state()?.presets ?? []).filter((preset) => preset.canAutomate === true).map((preset) => ({ value: `preset:${preset.id}`, label: `新建 ${preset.label}` })),
+      ...(this.tab?.agents ?? []).filter((agent) => agent.kind && agent.status === 'idle' && agent.paneId !== plannerId).map((agent) => ({ value: `pane:${agent.paneId}`, label: t("Existing {0} · {1} (idle)", paneName(agent), agent.paneId) })),
+      ...(this.host.state()?.presets ?? []).filter((preset) => preset.canAutomate === true).map((preset) => ({ value: `preset:${preset.id}`, label: t("New {0}", preset.label) })),
     ];
   }
 
@@ -402,7 +403,7 @@ export class TaskView {
     const choices = this.choices();
     return h('select', {
       'aria-label': label, disabled, onchange: (event: Event) => onChange((event.target as HTMLSelectElement).value),
-    }, h('option', { value: '', selected: !choices.some((item) => item.value === value) }, choices.length ? '選擇 agent…' : '沒有可用的閒置 agent 或可自動協作的 preset'),
+    }, h('option', { value: '', selected: !choices.some((item) => item.value === value) }, choices.length ? t("Choose an agent…") : t("No idle agents or supported automation presets are available")),
     ...choices.map((item) => h('option', { value: item.value, selected: value === item.value }, item.label)));
   }
 
@@ -437,16 +438,16 @@ export class TaskView {
     this.handoffSlot!.replaceChildren();
     if (!draft?.open) return;
     const locked = (pending && latest?.status !== 'failed') || Boolean(draft.submitting) || (draft.submitted && latest?.status !== 'failed');
-    const panel = h('section', { class: 'task-handoff', 'aria-label': '交接規劃者' },
-      h('div', { class: 'task-section-title' }, h('strong', {}, '交接規劃者'), h('button', { class: 'link', onclick: () => { draft.open = false; this.refreshCurrent(); } }, '收起')),
-      !locked && latest?.status !== 'accepted' ? h('label', {}, '接手者', this.targetSelect(draft.target, (value) => { draft.target = value; this.refreshCurrent(); }, '交接接手者')) : null,
-      draft.preparing ? h('p', { class: 'muted', role: 'status' }, '正在從現有任務、對話與回報建立交接快照…') : null,
-      h('details', { class: 'task-checkpoint', open: true }, h('summary', {}, '交接快照 · 由目前紀錄組成'), h('pre', {}, latest && pending && latest.status !== 'failed' ? latest.checkpoint || draft.checkpoint || '尚未取得快照' : draft.checkpoint || latest?.checkpoint || '尚未取得快照')),
+    const panel = h('section', { class: 'task-handoff', 'aria-label': t("Hand off planner") },
+      h('div', { class: 'task-section-title' }, h('strong', {}, t("Hand off planner")), h('button', { class: 'link', onclick: () => { draft.open = false; this.refreshCurrent(); } }, t("Collapse"))),
+      !locked && latest?.status !== 'accepted' ? h('label', {}, t("Successor"), this.targetSelect(draft.target, (value) => { draft.target = value; this.refreshCurrent(); }, t("Handoff successor"))) : null,
+      draft.preparing ? h('p', { class: 'muted', role: 'status' }, t("Building a handoff checkpoint from the task, conversations, and reports…")) : null,
+      h('details', { class: 'task-checkpoint', open: true }, h('summary', {}, t("Handoff checkpoint · captured from current records")), h('pre', {}, latest && pending && latest.status !== 'failed' ? latest.checkpoint || draft.checkpoint || t("No checkpoint available yet") : draft.checkpoint || latest?.checkpoint || t("No checkpoint available yet"))),
       draft.error ? h('div', { class: 'task-inline-error', role: 'alert' }, draft.error) : null);
-    if (latest?.status === 'accepted') panel.append(h('p', { class: 'task-confirmed', role: 'status' }, `${latest.target ? identityName(latest.target) : '新規劃者'} 已回報接手。原 worker request 繼續執行。`));
-    else if (locked) panel.append(h('p', { class: 'task-waiting', role: 'status' }, draft.submitting ? '正在送出交接…' : pending ? '舊規劃已暫停，等待接手確認；worker 回覆暫存於本問題。' : '交接已送出，等待 agent 回報接手。'));
+    if (latest?.status === 'accepted') panel.append(h('p', { class: 'task-confirmed', role: 'status' }, t("{0} has accepted the handoff. Existing worker requests continue.", latest.target ? identityName(latest.target) : t("New planner"))));
+    else if (locked) panel.append(h('p', { class: 'task-waiting', role: 'status' }, draft.submitting ? t("Sending handoff…") : pending ? t("The previous planner is paused while awaiting acceptance. Worker replies are retained in this task.") : t("Handoff sent. Waiting for the agent to accept.")));
     else {
-      if (latest?.status === 'failed') panel.append(h('p', { class: 'task-inline-error', role: 'alert' }, latest.error || '上次交接失敗；請核對後重新交接。'));
+      if (latest?.status === 'failed') panel.append(h('p', { class: 'task-inline-error', role: 'alert' }, latest.error ? formatLocalized(latest.error, latest.errorLocalization) : t("The previous handoff failed. Check the state before trying again.")));
       panel.append(h('button', {
         class: 'task-submit-handoff', disabled: !draft.checkpoint || Boolean(draft.preparing) || !this.target(draft.target),
         onclick: () => {
@@ -455,7 +456,7 @@ export class TaskView {
           draft.previousHandoffId = task?.handoffs.at(-1)?.id;
           this.host.send({ type: 'requestHandoff', tabId, operationId: draft.submitting, target }); this.refreshCurrent();
         },
-      }, '送出交接'));
+      }, t("Send handoff")));
     }
     this.handoffSlot!.append(panel);
   }
@@ -464,7 +465,7 @@ export class TaskView {
     const { h } = this.host;
     const available = this.tab!.agents.some((agent) => agent.paneId === identity.paneId);
     return available ? h('button', { class: 'link task-pane-link', title: identity.paneId, onclick: () => this.jumpToPane(identity.paneId) }, identityName(identity))
-      : h('span', { title: `${identity.paneId}（pane 已關閉）` }, identityName(identity));
+      : h('span', { title: t("{0} (pane closed)", identity.paneId) }, identityName(identity));
   }
 
   private renderCollaboration(): void {
@@ -478,19 +479,19 @@ export class TaskView {
       this.dispatchKey = dispatchKey;
       dispatchSlot.replaceChildren();
       if (task?.enabled && task.status !== 'archived') {
-        const input = h('textarea', { id: 'task-dispatch-text', rows: 3, 'aria-label': '派工內容', placeholder: '描述交付內容、限制與要回報的結果', value: dispatch.text, disabled: Boolean(dispatch.submitting) });
+        const input = h('textarea', { id: 'task-dispatch-text', rows: 3, 'aria-label': t("Delegation instructions"), placeholder: t("Describe the deliverables, constraints, and required report"), value: dispatch.text, disabled: Boolean(dispatch.submitting) });
         input.addEventListener('input', () => { dispatch.text = input.value; });
-        dispatchSlot.append(h('div', { class: 'task-collaboration-actions' }, h('button', { class: 'secondary small', onclick: () => this.host.send({ type: 'copyCollaborationPrompt', tabId }) }, '複製協作入口')),
-          h('details', { class: 'task-dispatch-form', open: Boolean(dispatch.open), ontoggle: (event: Event) => { dispatch.open = (event.target as HTMLDetailsElement).open; } }, h('summary', {}, '派工給 agent'),
-            h('label', {}, '執行者', this.targetSelect(dispatch.target, (value) => { dispatch.target = value; }, '派工執行者', task.status === 'handoff_pending' || Boolean(dispatch.submitting))),
-            h('label', {}, '工作內容', input),
+        dispatchSlot.append(h('div', { class: 'task-collaboration-actions' }, h('button', { class: 'secondary small', onclick: () => this.host.send({ type: 'copyCollaborationPrompt', tabId }) }, t("Copy collaboration commands"))),
+          h('details', { class: 'task-dispatch-form', open: Boolean(dispatch.open), ontoggle: (event: Event) => { dispatch.open = (event.target as HTMLDetailsElement).open; } }, h('summary', {}, t("Delegate to an agent")),
+            h('label', {}, t("Worker"), this.targetSelect(dispatch.target, (value) => { dispatch.target = value; }, t("Delegation worker"), task.status === 'handoff_pending' || Boolean(dispatch.submitting))),
+            h('label', {}, t("Instructions"), input),
             dispatch.error ? h('div', { class: 'task-inline-error', role: 'alert' }, dispatch.error) : null,
             h('button', { class: 'task-submit-dispatch', disabled: task.status === 'handoff_pending' || Boolean(dispatch.submitting), onclick: () => {
               const target = this.target(dispatch.target);
-              if (!target || !dispatch.text.trim()) { dispatch.error = '請選擇執行者並填寫工作內容。'; this.refreshCurrent(); return; }
+              if (!target || !dispatch.text.trim()) { dispatch.error = t("Choose a worker and enter the instructions."); this.refreshCurrent(); return; }
               dispatch.open = true; dispatch.submitting = this.operationId(); delete dispatch.error;
               this.host.send({ type: 'delegateTask', tabId, operationId: dispatch.submitting, target, text: dispatch.text.trim() }); this.refreshCurrent();
-            } }, dispatch.submitting ? '正在派工…' : '派工')));
+            } }, dispatch.submitting ? t("Delegating…") : t("Delegate"))));
       }
     }
     const key = JSON.stringify([task, this.tab!.agents.map((agent) => agent.paneId), this.answers]);
@@ -500,18 +501,18 @@ export class TaskView {
     this.recordsKey = key;
     const records = this.content!.querySelector<HTMLElement>('.task-records')!;
     records.replaceChildren();
-    if (!task || (!task.enabled && task.status !== 'archived')) { records.append(h('p', { class: 'muted pad' }, '啟用規劃者後，這裡會保留本問題的派工、等待與回報。')); return; }
-    if (!task.requests.length) records.append(h('p', { class: 'muted' }, '尚未派工。可由規劃者使用協作指引呼叫其他 agent，也可在這裡發起工作。'));
+    if (!task || (!task.enabled && task.status !== 'archived')) { records.append(h('p', { class: 'muted pad' }, t("Enable a planner to track this task’s delegations, waits, and reports here."))); return; }
+    if (!task.requests.length) records.append(h('p', { class: 'muted' }, t("No work delegated yet. The planner can use the collaboration commands, or you can delegate work here.")));
     for (const request of task.requests) records.append(this.renderRequest(request));
-    records.append(h('h3', { class: 'task-section-label' }, '協作紀錄'));
-    if (!task.events.length) records.append(h('p', { class: 'muted' }, '尚無協作事件。'));
+    records.append(h('h3', { class: 'task-section-label' }, t("Collaboration history")));
+    if (!task.events.length) records.append(h('p', { class: 'muted' }, t("No collaboration events yet.")));
     for (const event of task.events) {
       const request = task.requests.find((item) => item.id === event.requestId);
       const agent = task.participants.find((item) => item.paneId === event.paneId);
       records.append(h('div', { class: `task-event task-event-${event.type}`, 'data-event-id': event.id },
         h('time', { dateTime: event.at }, timeLabel(event.at)),
         request ? h('div', { class: 'task-event-direction' }, this.paneLink(request.requestedBy), ' → ', this.paneLink(request.target), h('code', {}, request.id)) : agent ? this.paneLink(agent) : null,
-        h('p', {}, event.text)));
+        h('p', {}, formatLocalized(event.text, event.localization))));
     }
   }
 
@@ -522,28 +523,28 @@ export class TaskView {
     const row = h('article', { class: `task-request task-request-${request.status}`, 'data-request-id': request.id },
       h('div', { class: 'task-request-heading' }, h('div', {}, this.paneLink(request.requestedBy), ' → ', this.paneLink(request.target)), h('span', { class: 'task-request-status' }, requestLabel(request))),
       h('code', { class: 'task-request-id' }, request.id), h('p', { class: 'task-request-prompt' }, request.prompt));
-    if (request.runtimeStatus) row.append(h('span', { class: 'muted task-runtime-status' }, `原生狀態：${request.runtimeStatus}`));
-    if (request.report) row.append(h('div', { class: 'task-request-report' }, h('strong', {}, request.report.status === 'needs_input' ? '需要釐清' : 'Agent 回報'), h('p', {}, request.report.text)));
-    if (request.error) row.append(h('p', { class: 'task-inline-error' }, request.error));
-    for (const reply of request.replies) row.append(h('div', { class: 'task-request-reply' }, h('strong', {}, `${identityName(reply.by)} 的回覆`), h('p', {}, reply.text)));
-    if (!['completed', 'failed'].includes(request.status)) row.append(h('p', { class: 'task-reply-route' }, task.status === 'archived' ? '問題已封存，顯示最後保留的回報狀態。' : task.status === 'handoff_pending' ? '回覆暫存於本問題，待接手後交付。' : `後續回覆交給規劃者：${identityName(task.planner)}`));
+    if (request.runtimeStatus) row.append(h('span', { class: 'muted task-runtime-status' }, t("Native state: {0}", request.runtimeStatus)));
+    if (request.report) row.append(h('div', { class: 'task-request-report' }, h('strong', {}, request.report.status === 'needs_input' ? t("Clarification needed") : t("Agent report")), h('p', {}, request.report.text)));
+    if (request.error) row.append(h('p', { class: 'task-inline-error' }, formatLocalized(request.error, request.errorLocalization)));
+    for (const reply of request.replies) row.append(h('div', { class: 'task-request-reply' }, h('strong', {}, t("Reply from {0}", identityName(reply.by))), h('p', {}, reply.text)));
+    if (!['completed', 'failed'].includes(request.status)) row.append(h('p', { class: 'task-reply-route' }, task.status === 'archived' ? t("This task is archived. Showing its last recorded report state.") : task.status === 'handoff_pending' ? t("Replies are retained in this task and will be provided at handoff.") : t("Future replies go to planner: {0}", identityName(task.planner))));
     if (request.status === 'needs_input' && request.report?.status !== 'needs_input' && task.status !== 'archived') {
       row.append(h('div', { class: 'task-native-blocked' },
-        h('p', {}, '原生 agent 正等待權限或選單，請到該 pane 完成操作。'),
-        h('button', { class: 'secondary small', disabled: !this.tab!.agents.some((agent) => agent.paneId === request.target.paneId), onclick: () => this.jumpToPane(request.target.paneId) }, '前往 pane 處理')));
+        h('p', {}, t("The native agent is awaiting approval or a menu choice. Complete the action in its pane.")),
+        h('button', { class: 'secondary small', disabled: !this.tab!.agents.some((agent) => agent.paneId === request.target.paneId), onclick: () => this.jumpToPane(request.target.paneId) }, t("Open pane to respond"))));
     }
     if (request.status === 'needs_input' && request.report?.status === 'needs_input' && task.status !== 'archived') {
       const draft = this.answers[request.id] ??= { text: '' };
-      const input = h('textarea', { class: 'task-answer-text', id: `task-answer-${request.id}`, 'aria-label': `回覆 ${request.id}`, rows: 2, value: draft.text, disabled: task.status === 'handoff_pending' || Boolean(draft.operationId) });
+      const input = h('textarea', { class: 'task-answer-text', id: `task-answer-${request.id}`, 'aria-label': t("Reply to {0}", request.id), rows: 2, value: draft.text, disabled: task.status === 'handoff_pending' || Boolean(draft.operationId) });
       input.addEventListener('input', () => { draft.text = input.value; });
-      row.append(h('label', {}, '補充說明', input));
+      row.append(h('label', {}, t("Additional information"), input));
       if (draft.error) row.append(h('div', { class: 'task-inline-error', role: 'alert' }, draft.error));
       row.append(h('button', { class: 'secondary small', disabled: task.status === 'handoff_pending' || Boolean(draft.operationId), onclick: () => {
           if (!draft.text.trim() || draft.operationId) return;
           input.blur();
           draft.operationId = this.operationId(); delete draft.error;
           this.host.send({ type: 'answerTaskRequest', tabId, requestId: request.id, operationId: draft.operationId, text: draft.text.trim() }); this.refreshCurrent();
-        } }, draft.operationId ? '送出中…' : '送出補充'));
+        } }, draft.operationId ? t("Sending…") : t("Send information")));
     }
     return row;
   }
@@ -554,17 +555,17 @@ export class TaskView {
     const key = JSON.stringify(references);
     if (this.recordsKey === key) return;
     this.recordsKey = key;
-    this.content!.replaceChildren(h('p', { class: 'muted pad' }, '從對話訊息旁保存的記憶會保留在本問題，並標示 Claude-mem 的實際紀錄 ID。'));
-    if (!references.length) this.content!.append(h('p', { class: 'muted pad' }, '這個問題尚未保存記憶。'));
+    this.content!.replaceChildren(h('p', { class: 'muted pad' }, t("Memories saved from conversations remain linked to this task with their actual Claude-mem record IDs.")));
+    if (!references.length) this.content!.append(h('p', { class: 'muted pad' }, t("No memories saved for this task yet.")));
     for (const memory of references) {
       const item = h('article', { class: 'task-memory-reference', 'data-memory-id': String(memory.id) },
-        h('strong', {}, memory.title || `記憶 #${memory.id}`), h('span', { class: 'task-memory-id' }, `Claude-mem #${memory.id}`));
+        h('strong', {}, memory.title || t("Memory #{0}", memory.id)), h('span', { class: 'task-memory-id' }, `Claude-mem #${memory.id}`));
       if (memory.text) item.append(h('p', { class: 'task-memory-text' }, memory.text));
-      if (memory.project) item.append(h('div', { class: 'muted' }, `專案：${memory.project}`));
+      if (memory.project) item.append(h('div', { class: 'muted' }, t("Project: {0}", memory.project)));
       if (memory.source) {
         const source = memory.source;
         const agent = this.task()?.participants.find((candidate) => candidate.paneId === source.paneId);
-        item.append(h('div', { class: 'muted' }, `來源：${agent ? identityName(agent) : source.paneId || '本問題'}${source.messageIndex === undefined ? '' : ` · 訊息 ${source.messageIndex + 1}`}`));
+        item.append(h('div', { class: 'muted' }, source.messageIndex === undefined ? t("Source: {0}", agent ? identityName(agent) : source.paneId || t("This task")) : t("Source: {0} · message {1}", agent ? identityName(agent) : source.paneId || t("This task"), source.messageIndex + 1)));
       }
       item.append(h('time', { dateTime: memory.savedAt }, timeLabel(memory.savedAt)));
       this.content!.append(item);
@@ -577,10 +578,10 @@ export class TaskView {
       const draft = this.ui.memoryDrafts[tabId];
       if (!draft || draft.operationId !== result.operationId) return;
       delete draft.operationId;
-      if (result.error || !Number.isInteger(result.memoryId) || (result.memoryId ?? 0) <= 0) draft.error = result.error || '尚未收到 Claude-mem 的記憶 ID，草稿已保留。';
+      if (result.error || !Number.isInteger(result.memoryId) || (result.memoryId ?? 0) <= 0) draft.error = result.error || t("No memory ID has been received from Claude-mem. Your draft is preserved.");
       else {
         delete this.ui.memoryDrafts[tabId];
-        this.feedbackByTab[tabId] = { text: `已保存至 Claude-mem · 記憶 #${result.memoryId}` };
+        this.feedbackByTab[tabId] = { text: t("Saved to Claude-mem · memory #{0}", result.memoryId) };
       }
       this.host.persist();
     } else if (result.kind === 'checkpoint' || result.kind === 'handoff') {

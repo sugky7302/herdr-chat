@@ -3,6 +3,7 @@
 import type { AgentView, ChatMessage, CompletionItem, FromWebview, PresetView, Transcript, Usage } from '../src/shared';
 import { renderMarkdown } from './markdown';
 import { shortModel } from '../src/modelName';
+import { getIntlLocale, t } from '../src/l10n.ts';
 
 type Child = Node | string | null | undefined | false;
 
@@ -45,12 +46,12 @@ interface QueueEdit {
 }
 
 const SCREEN_KEYS: { label: string; keys: string[]; title: string }[] = [
-  { label: '↑', keys: ['up'], title: '上' },
-  { label: '↓', keys: ['down'], title: '下' },
-  { label: 'Enter', keys: ['enter'], title: '確認' },
-  { label: 'Esc', keys: ['esc'], title: '取消' },
+  { label: '↑', keys: ['up'], title: "Up" },
+  { label: '↓', keys: ['down'], title: "Down" },
+  { label: 'Enter', keys: ['enter'], title: "Confirm" },
+  { label: 'Esc', keys: ['esc'], title: "Cancel" },
   { label: 'Tab', keys: ['tab'], title: 'Tab' },
-  { label: 'Ctrl+C', keys: ['ctrl+c'], title: '中斷' },
+  { label: 'Ctrl+C', keys: ['ctrl+c'], title: "Interrupt" },
 ];
 
 const MAX_DROP_BYTES = 25 * 1024 * 1024;
@@ -104,8 +105,8 @@ export class ChatView {
       'button',
       {
         class: 'scroll-bottom',
-        title: '捲到最新訊息',
-        'aria-label': '捲到最新訊息',
+        title: t("Scroll to latest message"),
+        'aria-label': t("Scroll to latest message"),
         onclick: () => this.scrollToBottom(true),
       },
       this.host.icon('down'),
@@ -172,7 +173,7 @@ export class ChatView {
   }
 
   addAttachments(paneId: string, paths: string[]): void {
-    if (paths.length) this.flash(`已附加 ${paths.length} 個檔案`);
+    if (paths.length) this.flash(t("Files attached: {0}", paths.length));
     const draft = this.draft(paneId);
     draft.attachments = [...new Set([...(draft.attachments ?? []), ...paths])];
     this.host.persist();
@@ -220,15 +221,15 @@ export class ChatView {
     if (key !== this.bodyKey) {
       this.bodyKey = key;
       if (!transcript) {
-        items.push(h('div', { class: 'muted pad' }, h('span', { class: 'spinner' }), '讀取對話…'));
+        items.push(h('div', { class: 'muted pad' }, h('span', { class: 'spinner' }), t("Loading conversation…")));
       } else {
         if (transcript.source === 'terminal' && transcript.messages[0]?.role === 'terminal') {
-          items.push(h('div', { class: 'notice' }, '這個 agent 沒有可讀的對話紀錄，以下是終端機畫面。'));
+          items.push(h('div', { class: 'notice' }, t("No readable conversation is available for this agent. The terminal output is shown below.")));
         }
         items.push(...this.renderTurns(transcript.messages, agent));
         for (const item of this.pending[paneId] ?? []) items.push(this.renderUser(item.text, true));
         if (agent?.status === 'working') {
-          items.push(h('div', { class: 'thinking' }, h('span', { class: 'spinner' }), '工作中…'));
+          items.push(h('div', { class: 'thinking' }, h('span', { class: 'spinner' }), t("Working…")));
         }
       }
       this.messages.replaceChildren(...items);
@@ -262,7 +263,7 @@ export class ChatView {
       }
       if (!reply) {
         reply = h('div', { class: 'content' });
-        out.push(h('div', { class: 'turn assistant', 'aria-label': `${agentName} 的回覆` }, reply));
+        out.push(h('div', { class: 'turn assistant', 'aria-label': t("Reply from {0}", agentName) }, reply));
       }
       if (message.role === 'assistant') {
         const body = h('div', { class: 'markdown' });
@@ -291,21 +292,21 @@ export class ChatView {
     const paneId = this.paneId;
     const { h } = this.host;
     parent.append(h('div', { class: 'message-actions' }, h('button', {
-      class: 'link save-message-memory', title: '保存這段訊息或其中選取的內容',
+      class: 'link save-message-memory', title: t("Save this message or the selected text"),
       onclick: () => {
         const selection = window.getSelection();
         const selectedText = selection?.rangeCount && body.contains(selection.getRangeAt(0).commonAncestorContainer) ? selection.toString() : undefined;
         this.host.saveMemory?.(paneId, message, messageIndex, selectedText);
       },
-    }, '保存成記憶')));
+    }, t("Save as memory"))));
   }
 
   private renderUser(text: string, pending = false): HTMLElement {
     const { h } = this.host;
     return h(
       'div',
-      { class: `turn user ${pending ? 'pending' : ''}`, 'aria-label': pending ? '你的訊息（傳送中）' : '你的訊息' },
-      h('div', { class: 'bubble', title: pending ? '傳送中' : undefined }, text),
+      { class: `turn user ${pending ? 'pending' : ''}`, 'aria-label': pending ? t("Your message (sending)") : t("Your message") },
+      h('div', { class: 'bubble', title: pending ? t("Sending") : undefined }, text),
     );
   }
 
@@ -347,17 +348,17 @@ export class ChatView {
     const waiting = agent?.status === 'blocked' || Boolean(transcript?.dialog?.length);
 
     if (!this.input) {
-      this.input = h('textarea', { id: `composer-${paneId}`, rows: 1, 'aria-label': '訊息' });
+      this.input = h('textarea', { id: `composer-${paneId}`, rows: 1, 'aria-label': t("Message") });
       this.trackComposition(this.input);
     }
     const textarea = this.input;
     textarea.disabled = Boolean(readOnly);
     if (textarea.value !== draft.text) textarea.value = draft.text;
     textarea.placeholder = waiting
-        ? '請點選上方選項；選「Type something」後可在這裡輸入回答'
+        ? t("Choose an option above. After choosing “Type something”, enter your answer here.")
         : working
-          ? '工作中：Enter 加入佇列，⌘/Ctrl+Enter 立即插入'
-          : '輸入訊息，/ 指令，@ 檔案（Enter 送出）';
+          ? t("Working: Enter to queue, ⌘/Ctrl+Enter to send immediately")
+          : t("Message, / commands, @ files (Enter to send)");
     const autosize = () => {
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
@@ -416,8 +417,8 @@ export class ChatView {
           'button',
           {
             class: 'chip-remove',
-            title: '移除',
-            'aria-label': `移除 ${file}`,
+            title: t("Remove"),
+            'aria-label': t("Remove {0}", file),
             onclick: () => {
               draft.attachments = (draft.attachments ?? []).filter((item) => item !== file);
               this.host.persist();
@@ -446,13 +447,13 @@ export class ChatView {
     };
 
     const toolbar: HTMLElement[] = [
-      h('button', { class: 'tool-button', title: '附加檔案', 'aria-label': '附加檔案', onclick: () => send({ type: 'pickFiles', paneId }) }, icon('attach')),
-      h('button', { class: 'tool-button trigger', title: '提及檔案（@）', 'aria-label': '提及檔案', onclick: () => insertTrigger('@') }, '@'),
-      h('button', { class: 'tool-button trigger', title: '指令（/）', 'aria-label': '指令', onclick: () => insertTrigger('/') }, '/'),
+      h('button', { class: 'tool-button', title: t("Attach files"), 'aria-label': t("Attach files"), onclick: () => send({ type: 'pickFiles', paneId }) }, icon('attach')),
+      h('button', { class: 'tool-button trigger', title: t("Mention a file (@)"), 'aria-label': t("Mention a file"), onclick: () => insertTrigger('@') }, '@'),
+      h('button', { class: 'tool-button trigger', title: t("Commands (/)"), 'aria-label': t("Commands"), onclick: () => insertTrigger('/') }, '/'),
     ];
     if (preset?.models.length) {
       toolbar.push(
-        this.chipPicker('model', preset.models, draft.model, '模型', currentModel, !preset.canSwitchModel, (value) => {
+        this.chipPicker('model', preset.models, draft.model, t("Model"), currentModel, !preset.canSwitchModel, (value) => {
           draft.model = value || undefined;
           draft.modelDirty = Boolean(value) && value !== currentModel;
           this.host.persist();
@@ -461,7 +462,7 @@ export class ChatView {
     }
     if (preset?.efforts.length) {
       toolbar.push(
-        this.chipPicker('effort', preset.efforts, draft.effort, 'Effort', currentEffort, !preset.canSwitchEffort, (value) => {
+        this.chipPicker('effort', preset.efforts, draft.effort, t('Effort'), currentEffort, !preset.canSwitchEffort, (value) => {
           draft.effort = value || undefined;
           draft.effortDirty = Boolean(value) && value !== currentEffort;
           this.host.persist();
@@ -472,14 +473,14 @@ export class ChatView {
     if (transcript?.usage) toolbar.push(this.renderUsage(transcript.usage));
     if (agent?.status === 'working') {
       toolbar.push(
-        h('button', { class: 'tool-button', title: '中斷（Esc）', 'aria-label': '中斷', onclick: () => send({ type: 'interrupt', paneId }) }, icon('stop')),
-        h('button', { class: 'tool-button', title: '立即插入（⌘/Ctrl+Enter）', 'aria-label': '立即插入', disabled: !agent, onclick: () => submit('now') }, icon('bolt')),
+        h('button', { class: 'tool-button', title: t("Interrupt (Esc)"), 'aria-label': t("Interrupt"), onclick: () => send({ type: 'interrupt', paneId }) }, icon('stop')),
+        h('button', { class: 'tool-button', title: t("Send immediately (⌘/Ctrl+Enter)"), 'aria-label': t("Send immediately"), disabled: !agent, onclick: () => submit('now') }, icon('bolt')),
       );
     }
     toolbar.push(
       h(
         'button',
-        { class: 'send-button', title: working ? '加入佇列（Enter）' : '送出（Enter）', 'aria-label': working ? '加入佇列' : '送出', disabled: !agent, onclick: () => submit('queue') },
+        { class: 'send-button', title: working ? t("Queue message (Enter)") : t("Send (Enter)"), 'aria-label': working ? t("Queue message") : t("Send"), disabled: !agent, onclick: () => submit('queue') },
         icon('send'),
       ),
     );
@@ -547,15 +548,15 @@ export class ChatView {
   ): HTMLElement {
     const { h } = this.host;
     const all = current && !options.includes(current) ? [current, ...options] : options;
-    const show = (option: string | undefined) => (option ? (id === 'model' ? shortModel(option) : option) : '預設');
+    const show = (option: string | undefined) => (option ? (id === 'model' ? shortModel(option) : option) : t("Default"));
     const button = h(
       'button',
       {
         class: `chip-picker ${this.openPicker === id ? 'open' : ''}`,
-        'aria-label': `${label}：${value ?? '目前設定'}`,
+        'aria-label': t("{0}: {1}", label, value ?? t("Current setting")),
         'aria-haspopup': 'listbox',
         'aria-expanded': String(this.openPicker === id),
-        title: disabled ? `這個 agent 不支援在對話中切換${label}` : `${label}：${value ?? '目前設定'}（下一則訊息生效）`,
+        title: disabled ? t("This agent does not support changing {0} during a conversation", label) : t("{0}: {1} (applies to the next message)", label, value ?? t("Current setting")),
         disabled,
       },
       h('span', { class: 'chip-picker-text' }, show(value)),
@@ -594,7 +595,7 @@ export class ChatView {
             },
             h('span', { class: 'picker-check', 'aria-hidden': 'true' }, option === value ? '✓' : ''),
             h('span', { class: 'picker-option-text' }, show(option)),
-            option === current ? h('span', { class: 'picker-option-full' }, '目前') : null,
+            option === current ? h('span', { class: 'picker-option-full' }, t("Current")) : null,
           ),
         ),
       );
@@ -643,26 +644,26 @@ export class ChatView {
     const contextPercent = usage.contextWindow ? Math.min(100, (context / usage.contextWindow) * 100) : null;
     const plan = usage.rateLimitPercent !== undefined;
     const remaining = plan ? Math.max(0, 100 - usage.rateLimitPercent!) : null;
-    const windowLabel = usage.rateLimitWindowMinutes ? formatWindow(usage.rateLimitWindowMinutes) : '方案';
+    const windowLabel = usage.rateLimitWindowMinutes ? formatWindow(usage.rateLimitWindowMinutes) : t("Plan");
     const lines = [
       plan
-        ? `${windowLabel}用量：剩 ${remaining!.toFixed(0)}%（已用 ${usage.rateLimitPercent!.toFixed(0)}%）${resetText(usage.rateLimitResetsAt)}`
+        ? t("{0} usage: {1}% remaining ({2}% used){3}", windowLabel, formatNumber(remaining!), formatNumber(usage.rateLimitPercent!), resetText(usage.rateLimitResetsAt))
         : '',
       usage.secondaryPercent !== undefined
-        ? `${usage.secondaryWindowMinutes ? formatWindow(usage.secondaryWindowMinutes) : '其他'}用量：剩 ${Math.max(0, 100 - usage.secondaryPercent).toFixed(0)}%${resetText(usage.secondaryResetsAt)}`
+        ? t("{0} usage: {1}% remaining{2}", usage.secondaryWindowMinutes ? formatWindow(usage.secondaryWindowMinutes) : t("Other"), formatNumber(Math.max(0, 100 - usage.secondaryPercent)), resetText(usage.secondaryResetsAt))
         : '',
-      `上下文：${formatTokens(context)}${usage.contextWindow ? ` / ${formatTokens(usage.contextWindow)}（${contextPercent!.toFixed(0)}%）` : ''}`,
-      usage.totalTokens !== undefined ? `本對話累計：${formatTokens(usage.totalTokens)}（含快取讀取）` : '',
-      plan ? '' : '沒有方案用量資料。Claude 需要執行「herdr: 啟用 Claude 用量顯示」。',
+      usage.contextWindow ? t("Context: {0} / {1} ({2}%)", formatTokens(context), formatTokens(usage.contextWindow), formatNumber(contextPercent!)) : t("Context: {0}", formatTokens(context)),
+      usage.totalTokens !== undefined ? t("Conversation total: {0} (including cached reads)", formatTokens(usage.totalTokens)) : '',
+      plan ? '' : t("Plan usage is unavailable. For Claude, run “herdr: Enable Claude usage display”."),
     ].filter(Boolean);
     const shownPercent = plan ? remaining! : contextPercent;
     const level = plan
       ? remaining! <= 15 ? 'high' : remaining! <= 40 ? 'mid' : ''
       : contextPercent === null ? '' : contextPercent >= 85 ? 'high' : contextPercent >= 60 ? 'mid' : '';
-    const text = plan ? `${shortWindow(usage.rateLimitWindowMinutes)} 剩 ${remaining!.toFixed(0)}%` : contextPercent !== null ? `${contextPercent.toFixed(0)}%` : formatTokens(context);
+    const text = plan ? t("{0} {1}% left", shortWindow(usage.rateLimitWindowMinutes), formatNumber(remaining!)) : contextPercent !== null ? `${formatNumber(contextPercent)}%` : formatTokens(context);
     return h(
       'span',
-      { class: `usage ${level}`, title: lines.join('\n'), 'aria-label': lines.join('，'), tabindex: 0 },
+      { class: `usage ${level}`, title: lines.join('\n'), 'aria-label': lines.join('; '), tabindex: 0 },
       shownPercent !== null ? ring(h('span', { class: 'usage-ring' }), shownPercent) : null,
       h('span', { class: 'usage-text' }, text),
     );
@@ -676,8 +677,8 @@ export class ChatView {
     return [
       h(
         'section',
-        { class: 'queue', 'aria-label': '訊息佇列' },
-        h('div', { class: 'queue-title' }, `佇列（${queue.length}）：agent 完成後依序送出`),
+        { class: 'queue', 'aria-label': t("Message queue") },
+        h('div', { class: 'queue-title' }, t("Queue ({0}): sent in order when the agent finishes", queue.length)),
         ...queue.map((item, index) =>
           h(
             'div',
@@ -687,7 +688,7 @@ export class ChatView {
             h(
               'button',
               {
-                class: 'tool-button', type: 'button', title: '修改訊息', 'aria-label': `修改第 ${index + 1} 則佇列訊息`, disabled: Boolean(edit),
+                class: 'tool-button', type: 'button', title: t("Edit message"), 'aria-label': t("Edit queued message {0}", index + 1), disabled: Boolean(edit),
                 onclick: () => {
                   this.queueEdits[paneId] = { id: item.id, text: item.text, attachments: [...item.attachments], saving: false };
                   this.composerKey = '';
@@ -699,12 +700,12 @@ export class ChatView {
             ),
             h(
               'button',
-              { class: 'tool-button', title: '立即插入到目前的回合', 'aria-label': '立即插入', disabled: edit?.id === item.id, onclick: () => send({ type: 'insertQueued', paneId, id: item.id }) },
+              { class: 'tool-button', title: t("Send immediately into the current turn"), 'aria-label': t("Send immediately"), disabled: edit?.id === item.id, onclick: () => send({ type: 'insertQueued', paneId, id: item.id }) },
               icon('bolt'),
             ),
             h(
               'button',
-              { class: 'tool-button', title: '移除', 'aria-label': '移除', disabled: edit?.id === item.id, onclick: () => send({ type: 'removeQueued', paneId, id: item.id }) },
+              { class: 'tool-button', title: t("Remove"), 'aria-label': t("Remove"), disabled: edit?.id === item.id, onclick: () => send({ type: 'removeQueued', paneId, id: item.id }) },
               icon('close'),
             ),
           ),
@@ -742,7 +743,7 @@ export class ChatView {
         onsubmit: (event: SubmitEvent) => {
           event.preventDefault();
           if (edit.saving || !available) return;
-          textarea.setCustomValidity(!edit.text.trim() && !edit.attachments.length ? '請輸入訊息。' : '');
+          textarea.setCustomValidity(!edit.text.trim() && !edit.attachments.length ? t("Enter a message.") : '');
           if (!textarea.reportValidity()) return;
           edit.saving = true;
           edit.error = undefined;
@@ -751,15 +752,15 @@ export class ChatView {
           send({ type: 'updateQueued', paneId, id: edit.id, text: edit.text });
         },
       },
-      h('label', { id: `${id}-label`, for: id }, '修改佇列訊息'),
+      h('label', { id: `${id}-label`, for: id }, t("Edit queued message")),
       textarea,
       h('div', { id: `${id}-help`, class: 'queue-edit-help' }, available
-        ? 'Enter 換行，⌘/Ctrl+Enter 儲存，Esc 取消。附件與排隊順序會保留。'
-        : '這則訊息已送出或移除。修改內容仍保留在這裡。'),
+        ? t("Enter for a new line, ⌘/Ctrl+Enter to save, Esc to cancel. Attachments and queue order are preserved.")
+        : t("This message has been sent or removed. Your edits are still here.")),
       error,
       h('div', { class: 'queue-edit-actions' },
-        h('button', { type: 'submit', disabled: edit.saving || !available }, edit.saving ? '儲存中…' : '儲存修改'),
-        h('button', { type: 'button', class: 'secondary', disabled: edit.saving, onclick: finish }, '取消'),
+        h('button', { type: 'submit', disabled: edit.saving || !available }, edit.saving ? t("Saving changes…") : t("Save changes")),
+        h('button', { type: 'button', class: 'secondary', disabled: edit.saving, onclick: finish }, t("Cancel")),
         !available ? h('button', {
           type: 'button', class: 'secondary', disabled: edit.saving,
           onclick: () => {
@@ -769,7 +770,7 @@ export class ChatView {
             this.host.persist();
             finish();
           },
-        }, '移到輸入框') : null,
+        }, t("Move to composer")) : null,
       ),
     );
     textarea.addEventListener('keydown', (event) => {
@@ -799,15 +800,15 @@ export class ChatView {
     return [
       h(
         'section',
-        { class: `dialog-card ${blocked ? 'blocked' : ''}`, 'aria-label': blocked ? 'agent 等待回應' : '終端機畫面' },
+        { class: `dialog-card ${blocked ? 'blocked' : ''}`, 'aria-label': blocked ? t("Agent awaiting a response") : t("Terminal output") },
         h(
           'div',
           { class: 'dialog-title' },
-          blocked ? 'agent 正在等你回應' : '終端機畫面',
+          blocked ? t("Agent is waiting for your response") : t("Terminal output"),
           transcript?.dialogTitle ? h('span', { class: 'dialog-tag' }, transcript.dialogTitle.replace(/^[☐☒✔✓□■]\s*/, '')) : null,
         ),
         options.length && transcript?.dialogQuestion ? h('div', { class: 'dialog-question' }, transcript.dialogQuestion) : null,
-        options.length ? h('details', {}, h('summary', {}, '顯示終端機畫面'), preview) : preview,
+        options.length ? h('details', {}, h('summary', {}, t("Show terminal output")), preview) : preview,
         options.length
           ? h(
               'div',
@@ -834,7 +835,7 @@ export class ChatView {
           'div',
           { class: 'screen-keys' },
           ...SCREEN_KEYS.map((item) =>
-            h('button', { class: 'secondary small', title: item.title, onclick: () => send({ type: 'keys', paneId, keys: item.keys }) }, item.label),
+            h('button', { class: 'secondary small', title: t(item.title), onclick: () => send({ type: 'keys', paneId, keys: item.keys }) }, item.label),
           ),
         ),
       ),
@@ -853,8 +854,8 @@ export class ChatView {
       'div',
       { class: 'drop-overlay', 'aria-hidden': 'true' },
       h('div', { class: 'drop-plus' }, '+'),
-      h('div', {}, '放開以附加檔案'),
-      h('div', { class: 'drop-sub' }, '從 VS Code 檔案總管拖曳時請按住 Shift'),
+      h('div', {}, t("Drop to attach files")),
+      h('div', { class: 'drop-sub' }, t("Hold Shift when dragging from the VS Code Explorer")),
     );
     document.body.append(overlay);
     let depth = 0;
@@ -992,21 +993,21 @@ export class ChatView {
         ? h(
             'div',
             { class: 'completion-footer' },
-            '↑↓ 選擇 · Enter 插入',
+            t("↑↓ to select · Enter to insert"),
             h(
               'button',
               {
                 class: 'link',
-                title: '在 agent 中打開 / 選單並讀取完整清單',
+                title: t("Open the agent’s / menu and read the complete list"),
                 onmousedown: (event: MouseEvent) => {
                   event.preventDefault();
                   this.host.send({ type: 'refreshCommands', paneId });
                 },
               },
-              '更新清單',
+              t("Refresh list"),
             ),
           )
-        : h('div', { class: 'completion-footer' }, '↑↓ 選擇 · Enter 插入');
+        : h('div', { class: 'completion-footer' }, t("↑↓ to select · Enter to insert"));
     popup.replaceChildren(...rows, footer);
     popup.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
   }
@@ -1060,16 +1061,20 @@ export class ChatView {
 }
 
 function formatTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
-  if (value >= 1000) return `${(value / 1000).toFixed(value >= 100_000 ? 0 : 1)}k`;
-  return String(value);
+  if (value >= 1_000_000) return `${formatNumber(value / 1_000_000, value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1000) return `${formatNumber(value / 1000, value >= 100_000 ? 0 : 1)}k`;
+  return formatNumber(value);
+}
+
+function formatNumber(value: number, fractionDigits = 0): string {
+  return new Intl.NumberFormat(getIntlLocale(), { maximumFractionDigits: fractionDigits }).format(value);
 }
 
 function formatWindow(minutes: number): string {
-  if (minutes % 10080 === 0) return `${minutes / 10080} 週`;
-  if (minutes % 1440 === 0) return `${minutes / 1440} 天`;
-  if (minutes % 60 === 0) return `${minutes / 60} 小時`;
-  return `${minutes} 分鐘`;
+  const [value, unit] = minutes % 10080 === 0 ? [minutes / 10080, 'week']
+    : minutes % 1440 === 0 ? [minutes / 1440, 'day']
+      : minutes % 60 === 0 ? [minutes / 60, 'hour'] : [minutes, 'minute'];
+  return new Intl.NumberFormat(getIntlLocale(), { style: 'unit', unit: String(unit), unitDisplay: 'long' }).format(Number(value));
 }
 
 function ring(element: HTMLElement, percent: number): HTMLElement {
@@ -1081,7 +1086,7 @@ function ring(element: HTMLElement, percent: number): HTMLElement {
 
 function shortWindow(minutes: number | undefined): string {
   if (!minutes) return '';
-  if (minutes === 10080) return '週';
+  if (minutes === 10080) return t("week");
   if (minutes % 60 === 0 && minutes < 1440) return `${minutes / 60}h`;
   if (minutes % 1440 === 0) return `${minutes / 1440}d`;
   return `${minutes}m`;
@@ -1091,6 +1096,7 @@ function resetText(resetsAt: number | undefined): string {
   if (!resetsAt) return '';
   const date = new Date(resetsAt * 1000);
   const sameDay = date.toDateString() === new Date().toDateString();
-  const time = date.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
-  return `，${sameDay ? '' : `${date.getMonth() + 1}/${date.getDate()} `}${time} 重設`;
+  const time = date.toLocaleTimeString(getIntlLocale(), { hour: '2-digit', minute: '2-digit' });
+  const day = sameDay ? '' : `${date.toLocaleDateString(getIntlLocale(), { month: 'numeric', day: 'numeric' })} `;
+  return t(', resets {0}', `${day}${time}`);
 }

@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
+import { getIntlLocale, setLocale, t } from './l10n.ts';
 import { Controller, describe } from './controller';
 import type { FromWebview, ToWebview } from './shared';
 import * as claudeUsage from './claudeUsage';
 import { createHash } from 'node:crypto';
 
 export function activate(context: vscode.ExtensionContext): void {
+  setLocale(vscode.env.language);
   const provider = new HerdrViewProvider(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('herdr.chat', provider, {
@@ -15,21 +17,21 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('herdr.newAgent', () => provider.post({ type: 'navigate', view: 'newAgent' })),
     vscode.commands.registerCommand('herdr.enableClaudeUsage', async () => {
       const choice = await vscode.window.showInformationMessage(
-        '啟用 Claude 用量顯示？',
+        t("Enable Claude usage display?"),
         {
           modal: true,
           detail:
-            '會修改 ~/.claude/settings.json 的 statusLine：改成先保存 Claude Code 提供的用量資料，再交給原本的 statusline 指令。終端機的狀態列不變。原本的設定會備份，可以用「herdr: 停用 Claude 用量顯示」還原。',
+            t("This changes statusLine in ~/.claude/settings.json to save usage data from Claude Code before forwarding it to your existing statusline command. The terminal status line stays the same. Your original settings are backed up and can be restored with \"herdr: Disable Claude Usage Display\"."),
         },
-        '啟用',
+        t("Enable"),
       );
-      if (choice !== '啟用') return;
+      if (choice !== t("Enable")) return;
       await claudeUsage.install();
-      void vscode.window.showInformationMessage('已啟用。Claude 下一次更新狀態列後就會顯示 5 小時用量。');
+      void vscode.window.showInformationMessage(t("Enabled. Five-hour usage will appear after Claude next updates its status line."));
     }),
     vscode.commands.registerCommand('herdr.disableClaudeUsage', async () => {
       await claudeUsage.uninstall();
-      void vscode.window.showInformationMessage('已還原原本的 Claude statusLine 設定。');
+      void vscode.window.showInformationMessage(t("The original Claude statusLine settings have been restored."));
     }),
     provider,
   );
@@ -113,11 +115,11 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
           await c.focusPane(message.paneId);
           break;
         case 'newTab':
-          await this.busy('建立新對話…', () => c.newTab());
+          await this.busy(t("Creating a new conversation…"), () => c.newTab());
           break;
         case 'newAgent': {
           if (message.saveAsDefault) await c.saveProjectDefault(message.presetId, message.model, message.effort);
-          const paneId = await this.busy('啟動 agent…', () =>
+          const paneId = await this.busy(t("Starting agent…"), () =>
             c.newAgent(message.presetId, message.tabId, message.model, message.effort),
           );
           this.post({ type: 'state', state: c.currentState()! });
@@ -185,8 +187,8 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
           this.post({ type: 'attachments', paneId: message.paneId, paths: await c.saveDroppedFiles(message.files) });
           break;
         case 'refreshCommands': {
-          const count = await this.busy('從 agent 讀取指令清單…', () => c.refreshCommands(message.paneId));
-          void vscode.window.showInformationMessage(`已更新 ${count} 個 / 指令。`);
+          const count = await this.busy(t("Reading commands from the agent…"), () => c.refreshCommands(message.paneId));
+          void vscode.window.showInformationMessage(t("Updated {0} / commands.", count));
           break;
         }
         case 'keys':
@@ -202,10 +204,10 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
           await c.switchWorktree(message.path);
           break;
         case 'createWorktree':
-          await this.busy('建立 worktree…', () => c.createWorktree(message.branch));
+          await this.busy(t("Creating worktree…"), () => c.createWorktree(message.branch));
           break;
         case 'createWorkspace':
-          await this.busy('建立 workspace…', () => c.createWorkspace());
+          await this.busy(t("Creating workspace…"), () => c.createWorkspace());
           break;
         case 'openSettings':
           await vscode.commands.executeCommand('workbench.action.openSettings', 'herdr.agentPresets');
@@ -248,7 +250,7 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
     const style = webview.asWebviewUri(vscode.Uri.joinPath(dist, 'webview.css'));
     const nonce = Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
     return `<!doctype html>
-<html lang="zh-Hant">
+<html lang="${getIntlLocale()}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

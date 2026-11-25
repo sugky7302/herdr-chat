@@ -1,4 +1,5 @@
 import './style.css';
+import { getIntlLocale, setLocale, t } from '../src/l10n.ts';
 import type {
   AgentView,
   FromWebview,
@@ -16,6 +17,8 @@ declare function acquireVsCodeApi(): {
   setState(state: any): void;
 };
 
+// The extension host supplies VS Code's display language before this bundle is evaluated.
+setLocale(document.documentElement.lang);
 const vscode = acquireVsCodeApi();
 
 type Route =
@@ -98,7 +101,7 @@ window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
       go({ view: 'pane', paneId: message.paneId });
       break;
     case 'busy':
-      busyText = message.busy ? (message.text ?? '處理中…') : null;
+      busyText = message.busy ? (message.text ?? t("Processing…")) : null;
       render();
       break;
     case 'error':
@@ -179,12 +182,12 @@ function icon(name: string): HTMLElement {
 
 function statusDot(status: string): HTMLElement {
   const labels: Record<string, string> = {
-    working: '執行中',
-    blocked: '等待你回應',
-    done: '原生回合結束',
-    idle: '閒置',
-    unknown: '狀態不明',
-    shell: '終端機',
+    working: t("Running"),
+    blocked: t("Awaiting your response"),
+    done: t("Native turn ended"),
+    idle: t("Idle"),
+    unknown: t("Unknown state"),
+    shell: t("Terminal"),
   };
   return h('span', { class: `status status-${status}`, title: labels[status] ?? status, role: 'img', 'aria-label': labels[status] ?? status });
 }
@@ -230,7 +233,7 @@ function render(): void {
   if (busyText) app.append(h('div', { class: 'busy', role: 'status' }, h('span', { class: 'spinner' }), busyText));
   if (errorText)
     app.append(
-      h('div', { class: 'error', role: 'alert' }, errorText, h('button', { class: 'link', onclick: () => { errorText = null; render(); } }, '關閉')),
+      h('div', { class: 'error', role: 'alert' }, errorText, h('button', { class: 'link', onclick: () => { errorText = null; render(); } }, t("Close"))),
     );
   if (focusedId) {
     const element = document.getElementById(focusedId) as HTMLInputElement | null;
@@ -242,14 +245,14 @@ function render(): void {
 }
 
 function renderHeader(): HTMLElement {
-  if (!state) return h('header', { class: 'header' }, h('span', { class: 'muted' }, '連線到 herdr…'));
+  if (!state) return h('header', { class: 'header' }, h('span', { class: 'muted' }, t("Connecting to herdr…")));
   const worktreeSelect = state.worktrees.length
     ? h(
         'select',
         {
           class: 'worktree',
-          'aria-label': '切換 worktree',
-          title: '切換分支（worktree）',
+          'aria-label': t("Switch worktree"),
+          title: t("Switch branch (worktree)"),
           onchange: (event: Event) => {
             const value = (event.target as HTMLSelectElement).value;
             if (value === '__new__') {
@@ -262,9 +265,9 @@ function renderHeader(): HTMLElement {
           },
         },
         ...state.worktrees.map((tree) =>
-          h('option', { value: tree.path, selected: tree.current }, `${tree.branch}${tree.workspaceId ? '' : '（未開啟）'}`),
+          h('option', { value: tree.path, selected: tree.current }, `${tree.branch}${tree.workspaceId ? '' : t(" (not open)")}`),
         ),
-        h('option', { value: '__new__' }, '＋ 新增 worktree…'),
+        h('option', { value: '__new__' }, t("＋ New worktree…")),
       )
     : null;
   const header = h(
@@ -273,7 +276,7 @@ function renderHeader(): HTMLElement {
     h('div', { class: 'repo' }, icon('repo'), h('strong', {}, state.repoName ?? 'herdr'), worktreeSelect),
   );
   if (creatingWorktree) {
-    const input = h('input', { id: 'branch-input', placeholder: '新分支名稱', 'aria-label': '新分支名稱' });
+    const input = h('input', { id: 'branch-input', placeholder: t("New branch name"), 'aria-label': t("New branch name") });
     const submit = () => {
       const branch = input.value.trim();
       if (!branch) return;
@@ -293,8 +296,8 @@ function renderHeader(): HTMLElement {
         'div',
         { class: 'inline-form' },
         input,
-        h('button', { onclick: submit }, '建立'),
-        h('button', { class: 'secondary', onclick: () => { creatingWorktree = false; render(); } }, '取消'),
+        h('button', { onclick: submit }, t("Create")),
+        h('button', { class: 'secondary', onclick: () => { creatingWorktree = false; render(); } }, t("Cancel")),
       ),
     );
     queueMicrotask(() => input.focus());
@@ -308,16 +311,16 @@ function renderMain(): HTMLElement {
     return h(
       'main',
       { class: 'empty' },
-      h('p', {}, state.error ?? '無法連線到 herdr。'),
-      h('button', { onclick: () => send({ type: 'refresh' }) }, '重新連線'),
+      h('p', {}, state.error ?? t("Unable to connect to herdr.")),
+      h('button', { onclick: () => send({ type: 'refresh' }) }, t("Reconnect")),
     );
   }
   if (!state.workspaceId) {
     return h(
       'main',
       { class: 'empty' },
-      h('p', {}, '這個 worktree 在 herdr 還沒有 workspace。'),
-      h('button', { onclick: () => send({ type: 'createWorkspace' }) }, '在 herdr 建立 workspace'),
+      h('p', {}, t("This worktree has no workspace in herdr yet.")),
+      h('button', { onclick: () => send({ type: 'createWorkspace' }) }, t("Create workspace in herdr")),
     );
   }
   switch (route?.view) {
@@ -327,7 +330,7 @@ function renderMain(): HTMLElement {
       return renderPane(route.paneId);
     case 'archivedTask': {
       const tab = taskView.archivedTab(route.tabId);
-      return tab ? taskView.mount(tab) : h('main', {}, toolbar('封存紀錄', { view: 'history' }), h('p', { class: 'muted pad' }, '正在讀取這個問題的紀錄…'));
+      return tab ? taskView.mount(tab) : h('main', {}, toolbar(t("Archived history"), { view: 'history' }), h('p', { class: 'muted pad' }, t("Loading this task’s records…")));
     }
     case 'newAgent':
       return renderNewAgent(route.tabId);
@@ -340,7 +343,7 @@ function toolbar(title: string | HTMLElement, back: Route | null, ...actions: Ch
   return h(
     'div',
     { class: 'toolbar' },
-    back ? h('button', { class: 'icon-button', title: '返回', 'aria-label': '返回', onclick: () => go(back) }, icon('back')) : null,
+    back ? h('button', { class: 'icon-button', title: t("Back"), 'aria-label': t("Back"), onclick: () => go(back) }, icon('back')) : null,
     h('h2', { title: typeof title === 'string' ? title : title.textContent }, title),
     h('div', { class: 'spacer' }),
     ...actions,
@@ -352,7 +355,7 @@ function agentTitle(agent: AgentView): HTMLElement {
   return h(
     'span',
     { class: 'agent-heading' },
-    h('span', { class: 'agent-name' }, agent.label || agent.name || agent.kind || '終端機'),
+    h('span', { class: 'agent-name' }, agent.label || agent.name || agent.kind || t("Terminal")),
     ' ',
     h('span', { class: 'agent-id' }, agent.paneId),
   );
@@ -386,9 +389,9 @@ function renderHistory(): HTMLElement {
     'main',
     {},
     toolbar(
-      `歷史紀錄（${state!.workspaceLabel ?? ''}）`,
+      t("History ({0})", state!.workspaceLabel ?? ''),
       null,
-      h('button', { class: 'secondary small', onclick: () => send({ type: 'newTab' }) }, '＋ 新問題'),
+      h('button', { class: 'secondary small', onclick: () => send({ type: 'newTab' }) }, t("＋ New task")),
     ),
     tabs.length
       ? h(
@@ -413,22 +416,22 @@ function renderHistory(): HTMLElement {
                   h(
                     'span',
                     { class: 'row-sub' },
-                    `#${tab.number} · ${tab.agents.filter((agent) => agent.kind).map((agent) => agent.kind).join('、') || '沒有 agent'}`,
+                    `#${tab.number} · ${new Intl.ListFormat(getIntlLocale()).format(tab.agents.filter((agent) => agent.kind).map((agent) => agent.kind!)) || t("No agents")}`,
                   ),
                 ),
               ),
               [
-                { icon: 'edit', label: '重新命名', run: () => send({ type: 'renameTab', tabId: tab.tabId }) },
-                { icon: 'trash', label: '關閉對話', run: () => send({ type: 'closeTab', tabId: tab.tabId }) },
+                { icon: 'edit', label: t("Rename"), run: () => send({ type: 'renameTab', tabId: tab.tabId }) },
+                { icon: 'trash', label: t("Close conversation"), run: () => send({ type: 'closeTab', tabId: tab.tabId }) },
               ],
             ),
           ),
         )
-      : h('p', { class: 'muted pad' }, '這個 workspace 還沒有進行中的問題。'),
-    archives.length ? h('h3', { class: 'task-section-label pad' }, '已封存的問題') : null,
+      : h('p', { class: 'muted pad' }, t("This workspace has no active tasks yet.")),
+    archives.length ? h('h3', { class: 'task-section-label pad' }, t("Archived tasks")) : null,
     archives.length ? h('ul', { class: 'list task-archive-list' }, ...archives.map((task) => h('li', {}, h('button', {
       class: 'row', 'data-archive-tab': task.tabId, onclick: () => go({ view: 'archivedTask', tabId: task.tabId }),
-    }, h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, task.title), h('span', { class: 'row-sub' }, `${task.requests.length} 項派工 · ${task.memoryReferences.length} 則記憶 · 唯讀`)))))) : null,
+    }, h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, task.title), h('span', { class: 'row-sub' }, t("Delegations: {0} · Memories: {1} · Read-only", task.requests.length, task.memoryReferences.length))))))) : null,
   );
 }
 
@@ -439,7 +442,7 @@ function renderTab(tabId: string): HTMLElement {
 
 const SHELL_PRESET: PresetView = {
   id: '__shell__',
-  label: '終端機',
+  label: "Terminal",
   models: [],
   efforts: [],
   canSwitchModel: false,
@@ -447,7 +450,7 @@ const SHELL_PRESET: PresetView = {
 };
 
 function renderNewAgent(tabId: string | null): HTMLElement {
-  const presets = [...state!.presets, SHELL_PRESET];
+  const presets = [...state!.presets, { ...SHELL_PRESET, label: t(SHELL_PRESET.label) }];
   const preset = presets.find((item) => item.id === newAgentChoice.presetId) ?? presets[0];
   if (preset && newAgentChoice.presetId !== preset.id) {
     newAgentChoice = { presetId: preset.id, model: preset.defaultModel, effort: preset.defaultEffort };
@@ -456,7 +459,7 @@ function renderNewAgent(tabId: string | null): HTMLElement {
   const targetSelect = h(
     'select',
     {
-      'aria-label': '加入位置',
+      'aria-label': t("Destination"),
       onchange: (event: Event) => {
         const value = (event.target as HTMLSelectElement).value;
         route = { view: 'newAgent', tabId: value || null };
@@ -464,19 +467,19 @@ function renderNewAgent(tabId: string | null): HTMLElement {
         render();
       },
     },
-    h('option', { value: '', selected: !tab }, '新對話（新 tab）'),
-    ...state!.tabs.map((item) => h('option', { value: item.tabId, selected: item.tabId === tabId }, `加入：${tabTitle(item)}`)),
+    h('option', { value: '', selected: !tab }, t("New conversation (new tab)")),
+    ...state!.tabs.map((item) => h('option', { value: item.tabId, selected: item.tabId === tabId }, t("Join: {0}", tabTitle(item)))),
   );
   return h(
     'main',
     {},
-    toolbar('新增 agent 或 pane', tab ? { view: 'tab', tabId: tab.tabId } : { view: 'history' }),
+    toolbar(t("Add agent or pane"), tab ? { view: 'tab', tabId: tab.tabId } : { view: 'history' }),
     h(
       'div',
       { class: 'form' },
       h(
         'div',
-        { class: 'preset-grid', role: 'radiogroup', 'aria-label': 'agent 種類' },
+        { class: 'preset-grid', role: 'radiogroup', 'aria-label': t("Agent type") },
         ...presets.map((item) =>
           h(
             'button',
@@ -493,12 +496,12 @@ function renderNewAgent(tabId: string | null): HTMLElement {
           ),
         ),
       ),
-      h('label', {}, '加入位置', targetSelect),
+      h('label', {}, t("Destination"), targetSelect),
       preset?.models.length
-        ? h('label', {}, '模型', select(preset.models, newAgentChoice.model, '模型', (value) => (newAgentChoice.model = value || undefined), { placeholder: '預設（依 agent 設定）' }))
+        ? h('label', {}, t("Model"), select(preset.models, newAgentChoice.model, t("Model"), (value) => (newAgentChoice.model = value || undefined), { placeholder: t("Default (agent settings)") }))
         : null,
       preset?.efforts.length
-        ? h('label', {}, 'Effort', select(preset.efforts, newAgentChoice.effort, 'Effort', (value) => (newAgentChoice.effort = value || undefined), { placeholder: '預設（依 agent 設定）' }))
+        ? h('label', {}, t('Effort'), select(preset.efforts, newAgentChoice.effort, t('Effort'), (value) => (newAgentChoice.effort = value || undefined), { placeholder: t("Default (agent settings)") }))
         : null,
       preset && (preset.models.length || preset.efforts.length)
         ? h(
@@ -509,7 +512,7 @@ function renderNewAgent(tabId: string | null): HTMLElement {
               checked: Boolean(newAgentChoice.saveAsDefault),
               onchange: (event: Event) => (newAgentChoice.saveAsDefault = (event.target as HTMLInputElement).checked),
             }),
-            '設為此專案預設（寫入 .vscode/settings.json）',
+            t("Save as project default (writes .vscode/settings.json)"),
           )
         : null,
       h(
@@ -530,9 +533,9 @@ function renderNewAgent(tabId: string | null): HTMLElement {
                 saveAsDefault: newAgentChoice.saveAsDefault,
               }),
           },
-          '啟動',
+          t("Start"),
         ),
-        h('button', { class: 'link', onclick: () => send({ type: 'openSettings' }) }, '編輯選項…'),
+        h('button', { class: 'link', onclick: () => send({ type: 'openSettings' }) }, t("Edit presets…")),
       ),
     ),
   );
@@ -574,8 +577,8 @@ function renderPaneToolbar(paneId: string): HTMLElement {
         'button',
         {
           class: `icon-button ${screenOn ? 'toggled' : ''}`,
-          title: '顯示終端機畫面與按鍵',
-          'aria-label': '顯示終端機畫面與按鍵',
+          title: t("Show terminal output and keys"),
+          'aria-label': t("Show terminal output and keys"),
           'aria-pressed': String(screenOn),
           onclick: () => {
             if (screenOn) chat.screenOpen.delete(paneId);
@@ -586,15 +589,15 @@ function renderPaneToolbar(paneId: string): HTMLElement {
         },
         icon('terminal'),
       ),
-      h('button', { class: 'icon-button', title: '重新命名', 'aria-label': '重新命名', onclick: () => send({ type: 'renamePane', paneId }) }, icon('edit')),
-      h('button', { class: 'icon-button', title: '關閉 pane', 'aria-label': '關閉 pane', onclick: () => send({ type: 'closePane', paneId }) }, icon('trash')),
-      h('button', { class: 'icon-button', title: '在 herdr 中聚焦此 pane', 'aria-label': '在 herdr 中聚焦此 pane', onclick: () => send({ type: 'focusPaneInHerdr', paneId }) }, icon('focus')),
+      h('button', { class: 'icon-button', title: t("Rename"), 'aria-label': t("Rename"), onclick: () => send({ type: 'renamePane', paneId }) }, icon('edit')),
+      h('button', { class: 'icon-button', title: t("Close pane"), 'aria-label': t("Close pane"), onclick: () => send({ type: 'closePane', paneId }) }, icon('trash')),
+      h('button', { class: 'icon-button', title: t("Focus this pane in herdr"), 'aria-label': t("Focus this pane in herdr"), onclick: () => send({ type: 'focusPaneInHerdr', paneId }) }, icon('focus')),
   );
 }
 
 function renderPane(paneId: string): HTMLElement {
   const found = findAgent(paneId);
-  return found ? taskView.mount(found.tab, paneId) : h('main', { class: 'empty' }, h('span', { class: 'spinner' }), '讀取 agent…');
+  return found ? taskView.mount(found.tab, paneId) : h('main', { class: 'empty' }, h('span', { class: 'spinner' }), t("Loading agent…"));
 }
 
 render();

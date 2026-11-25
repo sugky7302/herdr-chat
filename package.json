@@ -1,9 +1,13 @@
 {
   "name": "herdr-vscode",
   "displayName": "herdr Agents",
-  "description": "在 VS Code 右側邊欄顯示 herdr 在目前專案的 workspace、tab、agent 與對話。",
-  "version": "0.3.0",
+  "description": "%extension.description%",
+  "version": "0.4.0",
   "publisher": "arvin",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sugky7302/herdr-chat.git"
+  },
   "private": true,
   "license": "UNLICENSED",
   "engines": {
@@ -38,26 +42,26 @@
     "commands": [
       {
         "command": "herdr.refresh",
-        "title": "herdr: 重新整理",
+        "title": "%herdr.refresh.title%",
         "icon": "$(refresh)"
       },
       {
         "command": "herdr.history",
-        "title": "herdr: 歷史紀錄（切換 tab）",
+        "title": "%herdr.history.title%",
         "icon": "$(history)"
       },
       {
         "command": "herdr.newAgent",
-        "title": "herdr: 新增 agent",
+        "title": "%herdr.newAgent.title%",
         "icon": "$(add)"
       },
       {
         "command": "herdr.enableClaudeUsage",
-        "title": "herdr: 啟用 Claude 用量顯示"
+        "title": "%herdr.enableClaudeUsage.title%"
       },
       {
         "command": "herdr.disableClaudeUsage",
-        "title": "herdr: 停用 Claude 用量顯示"
+        "title": "%herdr.disableClaudeUsage.title%"
       }
     ],
     "menus": {
@@ -85,33 +89,33 @@
         "herdr.claudeMemUrl": {
           "type": "string",
           "default": "",
-          "description": "Claude-mem worker URL。留空沿用 CLAUDE_MEM_WORKER_URL、worker host/port 環境變數或 ~/.claude-mem/settings.json。保存既有文字不呼叫模型。"
+          "description": "%herdr.claudeMemUrl.description%"
         },
         "herdr.claudeMemSettingsPath": {
           "type": "string",
           "default": "",
-          "description": "Claude-mem settings.json 路徑。留空使用 ~/.claude-mem/settings.json；沿用其中的 worker 位址與本機 API token。"
+          "description": "%herdr.claudeMemSettingsPath.description%"
         },
         "herdr.collaborationNodePath": {
           "type": "string",
           "default": "node",
-          "description": "agent 執行協作 CLI 使用的 Node.js 20+ 執行檔。可填絕對路徑；變更後重新載入 VS Code 視窗。"
+          "description": "%herdr.collaborationNodePath.description%"
         },
         "herdr.socketPath": {
           "type": "string",
           "default": "",
-          "description": "herdr API socket 的路徑。留空時依序使用 HERDR_SOCKET_PATH 與 ~/.config/herdr/herdr.sock。"
+          "description": "%herdr.socketPath.description%"
         },
         "herdr.transcriptLines": {
           "type": "number",
           "default": 400,
-          "description": "沒有原生對話紀錄時，從終端機讀取的行數。"
+          "description": "%herdr.transcriptLines.description%"
         },
         "herdr.agentDefaults": {
           "type": "object",
           "scope": "resource",
           "default": {},
-          "markdownDescription": "每個專案的預設模型與 effort，依選項代號設定。建議寫在專案的 `.vscode/settings.json`，例如：`{ \"claude\": { \"model\": \"opus\", \"effort\": \"high\" } }`。",
+          "markdownDescription": "%herdr.agentDefaults.description%",
           "additionalProperties": {
             "type": "object",
             "properties": {
@@ -126,7 +130,7 @@
         },
         "herdr.agentPresets": {
           "type": "array",
-          "description": "「新增 agent」選單中的選項。可以新增自己的選項。",
+          "description": "%herdr.agentPresets.description%",
           "items": {
             "type": "object",
             "required": [
@@ -136,40 +140,40 @@
             "properties": {
               "id": {
                 "type": "string",
-                "description": "選項代號。也用來產生 agent 名稱。只能用小寫英文、數字、- 與 _。"
+                "description": "%herdr.agentPresets.id.description%"
               },
               "label": {
                 "type": "string",
-                "description": "選單中顯示的名稱。"
+                "description": "%herdr.agentPresets.label.description%"
               },
               "kind": {
                 "type": "string",
-                "description": "herdr 支援的 agent 種類（例如 claude、codex、agy）。設定後使用 herdr agent start 啟動。"
+                "description": "%herdr.agentPresets.kind.description%"
               },
               "command": {
                 "type": "string",
-                "description": "herdr 不支援的 agent 改用這個指令在 pane 內啟動。kind 與 command 只能擇一。"
+                "description": "%herdr.agentPresets.command.description%"
               },
               "args": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "固定的啟動參數。"
+                "description": "%herdr.agentPresets.args.description%"
               },
               "models": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "模型選單的選項。"
+                "description": "%herdr.agentPresets.models.description%"
               },
               "efforts": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "effort 選單的選項。"
+                "description": "%herdr.agentPresets.efforts.description%"
               },
               "defaultModel": {
                 "type": "string"
@@ -182,22 +186,22 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "啟動時設定模型的參數。{model} 會換成選定的模型。"
+                "description": "%herdr.agentPresets.modelArgs.description%"
               },
               "effortArgs": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "啟動時設定 effort 的參數。{effort} 會換成選定的 effort。"
+                "description": "%herdr.agentPresets.effortArgs.description%"
               },
               "switchModel": {
                 "type": "string",
-                "description": "對話中切換模型時送出的指令，例如 /model {model}。留空表示不支援對話中切換。"
+                "description": "%herdr.agentPresets.switchModel.description%"
               },
               "switchEffort": {
                 "type": "string",
-                "description": "對話中切換 effort 時送出的指令，例如 /effort {effort}。留空表示不支援對話中切換。"
+                "description": "%herdr.agentPresets.switchEffort.description%"
               },
               "switchStyle": {
                 "type": "string",
@@ -205,7 +209,7 @@
                   "command",
                   "codex-menu"
                 ],
-                "description": "codex-menu 表示操作 Codex 的 /model 選單切換（只套用到目前 session）。"
+                "description": "%herdr.agentPresets.switchStyle.description%"
               }
             }
           },

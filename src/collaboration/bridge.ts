@@ -1,3 +1,4 @@
+import { t } from '../l10n.ts';
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -25,23 +26,23 @@ export async function startBridge(directory: string, dispatch: (input: RpcInput)
     const providedAuth = Buffer.from(req.headers.authorization ?? '');
     if (req.headers.origin || req.headers.host !== `127.0.0.1:${port}` || providedAuth.length !== expectedAuth.length || !timingSafeEqual(providedAuth, expectedAuth)) {
       req.resume();
-      reply(403, { ok: false, error: { code: 'unauthorized', message: '此連線未獲協作服務授權。' } });
+      reply(403, { ok: false, error: { code: 'unauthorized', message: t("This connection is not authorized to use the collaboration service.") } });
       return;
     }
     if (req.method !== 'POST' || req.url !== '/rpc') {
-      req.resume(); reply(404, { ok: false, error: { code: 'not_found', message: 'Unknown collaboration endpoint.' } }); return;
+      req.resume(); reply(404, { ok: false, error: { code: 'not_found', message: t('Unknown collaboration endpoint.') } }); return;
     }
     try {
       const chunks: Buffer[] = [];
       let size = 0;
       for await (const chunk of req) {
         size += chunk.length;
-        if (size > 1024 * 1024) throw Object.assign(new Error('協作訊息超過 1 MiB。'), { code: 'too_large' });
+        if (size > 1024 * 1024) throw Object.assign(new Error(t("The collaboration message exceeds 1 MiB.")), { code: 'too_large' });
         chunks.push(Buffer.from(chunk));
       }
       const input = JSON.parse(Buffer.concat(chunks).toString('utf8')) as RpcInput;
       if (!input || !commands.has(input.command) || typeof input.taskId !== 'string' || !input.caller || typeof input.caller.paneId !== 'string' || !Number.isSafeInteger(input.caller.generation) || !input.args || typeof input.args !== 'object' || Array.isArray(input.args)) {
-        throw Object.assign(new Error('不完整的協作要求。'), { code: 'invalid_request' });
+        throw Object.assign(new Error(t("The collaboration request is incomplete.")), { code: 'invalid_request' });
       }
       reply(200, { ok: true, result: await dispatch(input) });
     } catch (error) {
