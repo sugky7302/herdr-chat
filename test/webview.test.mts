@@ -1047,3 +1047,20 @@ test('思考中秒數每秒自動遞增更新，不需切換頁面', async () =>
     assert.match(count(), /思考中… [34]s/);
   } finally { await f.window.happyDOM.close(); }
 });
+
+test('輸入框有還沒送出的訊息時，tab 與 agent 清單顯示編輯圖示', async () => {
+  const f = collaborationFixture();
+  try {
+    const editor = f.input();
+    editor.value = '還沒送出'; editor.dispatchEvent(new f.window.Event('input'));
+    f.click('[data-task-page="chat"]');
+    assert.ok(f.document.querySelector('[data-agent-pane="wE:p1"] .draft-mark'), '有草稿的 agent 顯示圖示');
+    assert.equal(f.document.querySelector('[data-agent-pane="wE:p2"] .draft-mark'), null, '沒有草稿的 agent 不顯示');
+    f.emit({ type: 'navigate', view: 'history' });
+    assert.ok(f.document.querySelector('.list .row .draft-mark'), '有草稿的 tab 顯示圖示');
+    f.click('.list .row'); f.click('[data-agent-pane="wE:p1"]');
+    f.input().value = ''; f.input().dispatchEvent(new f.window.Event('input'));
+    f.click('[data-task-page="chat"]');
+    assert.equal(f.document.querySelector('[data-agent-pane="wE:p1"] .draft-mark'), null, '清空後圖示消失');
+  } finally { await f.window.happyDOM.close(); }
+});

@@ -1008,3 +1008,7 @@ button.settings-agent-choice:hover:not(:disabled) { background: var(--vscode-lis
 /* 捲動區上方不留內距，避免固定的問題上方露出底下的文字。 */
 .messages { padding-top: 0; }
 .messages > :first-child { margin-top: 4px; }
+
+/* 輸入框有還沒送出的訊息 */
+.draft-mark { display: inline-flex; vertical-align: -2px; margin-left: 6px; color: var(--vscode-charts-yellow, var(--vscode-descriptionForeground)); }
+.draft-mark .icon { width: 13px; height: 13px; }

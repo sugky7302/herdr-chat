@@ -216,6 +216,16 @@ function icon(name: string): HTMLElement {
   return h('span', { class: `icon icon-${name}`, 'aria-hidden': 'true' });
 }
 
+/** 輸入框裡有還沒送出的文字或附加檔案。 */
+function hasDraft(paneId: string): boolean {
+  const draft = drafts[paneId];
+  return Boolean(draft && (draft.text?.trim() || draft.attachments?.length));
+}
+
+function draftMark(): HTMLElement {
+  return h('span', { class: 'draft-mark', title: t("Unsent message in the input box"), role: 'img', 'aria-label': t("Unsent message in the input box") }, icon('edit'));
+}
+
 function statusDot(status: string): HTMLElement {
   const labels: Record<string, string> = {
     working: t("Running"),
@@ -456,7 +466,7 @@ function renderHistory(): HTMLElement {
                 h(
                   'span',
                   { class: 'row-text' },
-                  h('span', { class: 'row-title' }, tabTitle(tab)),
+                  h('span', { class: 'row-title' }, tabTitle(tab), tab.agents.some((agent) => hasDraft(agent.paneId)) ? draftMark() : null),
                   h(
                     'span',
                     { class: 'row-sub' },
@@ -606,6 +616,7 @@ const taskView: TaskView = new TaskView({
   paneToolbar: renderPaneToolbar,
   openAgent: (paneId) => { if (route?.view !== 'pane' || route.paneId !== paneId) chat.clearTranscript(); go({ view: 'pane', paneId }); },
   openTab: (tabId) => go({ view: 'tab', tabId }),
+  draftMark: (paneId) => (hasDraft(paneId) ? draftMark() : null),
   history: () => go({ view: 'history' }),
   newAgent: (tabId) => go({ view: 'newAgent', tabId }),
 }, taskUi);

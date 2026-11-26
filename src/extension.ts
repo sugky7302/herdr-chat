@@ -80,6 +80,11 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
   }
 
   post(message: ToWebview): void {
+    // 錯誤用 VS Code 的通知框顯示，不佔用側邊欄的空間。
+    if (message.type === 'error') {
+      void vscode.window.showErrorMessage(`herdr: ${message.text}`);
+      return;
+    }
     void this.view?.webview.postMessage(message);
   }
 

@@ -35,6 +35,8 @@ export interface TaskHost {
   openTab(tabId: string): void;
   history(): void;
   newAgent(tabId: string): void;
+  /** 這個 agent 的輸入框裡有還沒送出的訊息時，回傳表示草稿的圖示。 */
+  draftMark(paneId: string): HTMLElement | null;
 }
 
 interface HandoffDraft {
@@ -384,7 +386,7 @@ export class TaskView {
             },
             h('span', { class: `status status-${agent.status}`, title: statusText, role: 'img', 'aria-label': statusText }),
             h('span', { class: 'row-text' },
-              h('span', { class: 'row-title task-agent-name' }, paneName(agent)),
+              h('span', { class: 'row-title task-agent-name' }, paneName(agent), this.host.draftMark(agent.paneId)),
               h('span', { class: 'row-sub task-agent-state' }, [role, status, agent.kind && agent.title ? agent.title : ''].filter(Boolean).join(' · ')))),
             h('div', { class: 'row-actions' },
               h('button', { class: 'icon-button', title: t("Rename"), 'aria-label': t("Rename"), onclick: () => this.host.send({ type: 'renamePane', paneId: agent.paneId }) }, this.host.icon('edit')),
