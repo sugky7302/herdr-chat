@@ -148,10 +148,12 @@ export type FromWebview =
   | { type: 'openPane'; paneId: string | null }
   | { type: 'openTask'; tabId: string }
   | { type: 'saveTaskMemory'; tabId: string; operationId: string; title: string; text: string; source?: { paneId: string; messageIndex: number; role: ChatRole; text: string } }
+  | { type: 'deleteTaskMemory'; tabId: string; operationId: string; memoryId: number }
   | { type: 'prepareHandoff'; tabId: string; operationId: string }
   | { type: 'requestHandoff'; tabId: string; operationId: string; target: { paneId: string } | { presetId: string }; reason?: string }
   | { type: 'delegateTask'; tabId: string; operationId: string; target: { paneId: string } | { presetId: string }; text: string }
   | { type: 'assignPlanner'; tabId: string; paneId: string; operationId: string }
+  | { type: 'disableCollaboration'; tabId: string; operationId: string }
   | { type: 'copyCollaborationPrompt'; tabId: string }
   | { type: 'answerTaskRequest'; tabId: string; requestId: string; operationId: string; text: string }
   | { type: 'focusTab'; tabId: string }
@@ -194,4 +196,5 @@ export type FromWebview =
   | { type: 'openAgentDocs'; catalogId: string }
   | { type: 'openSkillFile'; skillId: string }
   | { type: 'openVSCodeSettings' }
-  | { type: 'openSettings' };
+  | { type: 'openSettings' }
+  | { type: 'exportConversation'; paneId: string };

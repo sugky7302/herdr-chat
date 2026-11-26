@@ -84,6 +84,14 @@ export class ChatView {
   private activeTurnStart = new Map<string, number>();
   /** 目前開啟的標籤選單。 */
   private openPicker: 'model' | 'effort' | null = null;
+  /** 點擊 `/` 按鈕開啟的 Claude 樣式動作選單。 */
+  private actionMenuOpen = false;
+  private actionMenuQuery = '';
+  private actionMenuIndex = 0;
+  private actionMenuSlashItems: CompletionItem[] = [];
+  private actionMenuRequestId = 0;
+  private actionMenuFlaggedSwitch = true;
+  private actionMenuThinking = true;
 
   constructor(private readonly host: ChatHost) {
     this.installDrop();
@@ -96,6 +104,8 @@ export class ChatView {
     if (this.paneId !== paneId) {
       this.stickToBottom = true;
       this.completion = null;
+      this.actionMenuOpen = false;
+      this.actionMenuQuery = '';
     }
     this.paneId = paneId;
     this.composerKey = '';
@@ -181,6 +191,12 @@ export class ChatView {
   }
 
   onCompletions(requestId: number, items: CompletionItem[]): void {
+    if (this.actionMenuOpen && requestId === this.actionMenuRequestId) {
+      this.actionMenuSlashItems = items;
+      this.actionMenuIndex = 0;
+      this.renderCompletion();
+      return;
+    }
     if (!this.completion || this.completion.requestId !== requestId) return;
     this.completion.items = items;
     this.completion.index = 0;
@@ -684,7 +700,9 @@ export class ChatView {
       this.updateCompletion(textarea, paneId);
     };
     textarea.onkeydown = (event) => this.onKeyDown(event, textarea, paneId, submit);
-    textarea.onblur = () => setTimeout(() => this.closeCompletion(), 150);
+    textarea.onblur = () => setTimeout(() => {
+      if (!this.actionMenuOpen) this.closeCompletion();
+    }, 150);
     textarea.onpaste = (event) => {
       const files = Array.from(event.clipboardData?.files ?? []);
       if (files.length) {
@@ -783,7 +801,10 @@ export class ChatView {
     const toolbar: HTMLElement[] = [
       h('button', { type: 'button', class: 'tool-button', title: edit ? t('Keep attachments while editing') : t("Attach files"), 'aria-label': t("Attach files"), disabled: Boolean(edit), onclick: () => send({ type: 'pickFiles', paneId }) }, icon('attach')),
       h('button', { type: 'button', class: 'tool-button trigger', title: t("Mention a file (@)"), 'aria-label': t("Mention a file"), disabled: Boolean(edit?.saving), onclick: () => insertTrigger('@') }, '@'),
-      h('button', { type: 'button', class: 'tool-button trigger', title: t("Commands (/)"), 'aria-label': t("Commands"), disabled: Boolean(edit?.saving), onclick: () => insertTrigger('/') }, '/'),
+      h('button', { type: 'button', class: `tool-button trigger ${this.actionMenuOpen ? 'open' : ''}`, title: t("Commands (/)"), 'aria-label': t("Commands"), 'aria-expanded': String(this.actionMenuOpen), disabled: Boolean(edit?.saving), onclick: (event: MouseEvent) => {
+        event.stopPropagation();
+        this.toggleActionMenu(paneId);
+      } }, '/'),
     ];
     const pill: HTMLElement[] = [];
     if (!edit && preset?.models.length) {
@@ -1251,8 +1272,40 @@ export class ChatView {
 
   // ---------- @ 與 / 補全 ----------
 
+  private toggleActionMenu(paneId: string): void {
+    if (this.actionMenuOpen) {
+      this.closeActionMenu();
+      this.input?.focus();
+      return;
+    }
+    this.completion = null;
+    this.openPicker = null;
+    this.composer?.querySelectorAll('.picker-menu').forEach((menu) => menu.remove());
+    this.actionMenuOpen = true;
+    this.actionMenuQuery = '';
+    this.actionMenuIndex = 0;
+    this.requestActionMenuCommands(paneId, '');
+    this.renderCompletion();
+    this.composer?.querySelector<HTMLInputElement>('.action-filter-input')?.focus();
+  }
+
+  private closeActionMenu(): void {
+    if (!this.actionMenuOpen) return;
+    this.actionMenuOpen = false;
+    this.actionMenuQuery = '';
+    this.renderCompletion();
+  }
+
+  private requestActionMenuCommands(paneId: string, query: string): void {
+    const requestId = this.nextRequestId++;
+    this.actionMenuRequestId = requestId;
+    const slashQuery = query.startsWith('/') ? query.slice(1) : query;
+    this.host.send({ type: 'complete', requestId, paneId, trigger: '/', query: slashQuery });
+  }
+
   private updateCompletion(textarea: HTMLTextAreaElement, paneId: string): void {
     if (this.composingElement === textarea) return;
+    if (this.actionMenuOpen) this.closeActionMenu();
     const caret = textarea.selectionStart ?? 0;
     const before = textarea.value.slice(0, caret);
     const slash = /^\/([^\s]*)$/.exec(before);
@@ -1275,14 +1328,26 @@ export class ChatView {
   }
 
   private closeCompletion(): void {
-    if (!this.completion) return;
+    if (!this.completion && !this.actionMenuOpen) return;
     this.completion = null;
+    this.actionMenuOpen = false;
+    this.actionMenuQuery = '';
     this.renderCompletion();
   }
 
   private renderCompletion(): void {
     const popup = this.composer?.querySelector<HTMLElement>('.completion');
     if (!popup) return;
+    const slashBtn = this.composer?.querySelector<HTMLElement>('.tool-button.trigger:nth-of-type(3)');
+    if (slashBtn) {
+      slashBtn.classList.toggle('open', this.actionMenuOpen);
+      slashBtn.setAttribute('aria-expanded', String(this.actionMenuOpen));
+    }
+    if (this.actionMenuOpen && this.paneId) {
+      this.renderActionMenu(popup, this.paneId);
+      return;
+    }
+    popup.classList.remove('action-menu-popup');
     const state = this.completion;
     if (!state || !state.items.length) {
       popup.hidden = true;
@@ -1331,6 +1396,520 @@ export class ChatView {
         : h('div', { class: 'completion-footer' }, t("↑↓ to select · Enter to insert"));
     popup.replaceChildren(...rows, footer);
     popup.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  private renderActionMenu(popup: HTMLElement, paneId: string): void {
+    const { h, send } = this.host;
+    const agent = this.host.agent(paneId);
+    const preset = this.host.preset(agent);
+    const transcript = this.transcript?.paneId === paneId ? this.transcript : null;
+    const draft = this.draft(paneId);
+    const getModel = () => draft.model ?? transcript?.model ?? preset?.defaultModel;
+    const getEffort = () => draft.effort ?? transcript?.effort ?? preset?.defaultEffort ?? 'medium';
+    const isClaude = (agent?.kind ?? preset?.id) === 'claude';
+    const isCodex = (agent?.kind ?? preset?.id) === 'codex';
+    const isDsh = agent?.kind === 'dsh' || agent?.kind === 'dsh-tui' || preset?.id === 'deepseek';
+
+    interface ActionItem {
+      id: string;
+      section: string;
+      label: string;
+      labelSuffix?: HTMLElement | string;
+      description?: string;
+      trailing?: HTMLElement;
+      keepOpen?: boolean;
+      run: () => void;
+    }
+
+    const sendSlash = (cmd: string) => {
+      this.closeActionMenu();
+      send({ type: 'send', paneId, text: cmd, mode: 'queue' });
+    };
+
+    const insertText = (value: string) => {
+      this.closeActionMenu();
+      const textarea = this.input;
+      if (!textarea) return;
+      textarea.value = value;
+      textarea.setSelectionRange(value.length, value.length);
+      textarea.dispatchEvent(new Event('input'));
+      textarea.focus();
+    };
+
+    const renderToggle = (isOn: boolean) =>
+      h(
+        'div',
+        { class: 'action-toggle' },
+        h('div', { class: `action-toggle-track ${isOn ? 'on' : ''}` }, h('div', { class: `action-toggle-thumb ${isOn ? 'on' : ''}` })),
+      );
+
+    const efforts = preset?.efforts.length ? preset.efforts : ['low', 'medium', 'high', 'max'];
+    const effortLabels: Record<string, string> = {
+      low: 'Low',
+      medium: 'Medium',
+      high: 'High',
+      xhigh: 'Extra high',
+      max: 'Max',
+      ultra: 'Ultra',
+    };
+    const renderEffortSlider = (): HTMLElement => {
+      const count = efforts.length;
+      const currentEffort = getEffort();
+      const idx = Math.max(0, efforts.indexOf(currentEffort));
+      const ratio = count > 1 ? idx / (count - 1) : 0;
+      const fill = h('div', { class: 'effort-slider-fill' });
+      fill.style.setProperty('--r', ratio.toFixed(4));
+      const thumb = h('div', { class: 'effort-slider-thumb' });
+      thumb.style.setProperty('--r', ratio.toFixed(4));
+      const notches = efforts.map((level, i) => {
+        const nr = count > 1 ? i / (count - 1) : 0;
+        const notch = h('div', { class: 'effort-slider-notch', 'data-level': level });
+        notch.style.setProperty('--r', nr.toFixed(4));
+        return notch;
+      });
+      const selectLevel = (nextLevel: string) => {
+        draft.effort = nextLevel;
+        draft.effortDirty = nextLevel !== transcript?.effort;
+        this.host.persist();
+        const effortBtn = this.composer?.querySelectorAll<HTMLElement>('.model-pill .chip-picker-text')[1];
+        if (effortBtn) effortBtn.textContent = nextLevel;
+        this.renderActionMenuList(popup, paneId);
+      };
+      const slider = h(
+        'button',
+        {
+          type: 'button',
+          class: 'effort-slider',
+          title: t('Effort'),
+          onmousedown: (event: MouseEvent) => event.preventDefault(),
+          onclick: (event: MouseEvent) => {
+            event.stopPropagation();
+            const activeIdx = Math.max(0, efforts.indexOf(getEffort()));
+            const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+            if (rect.width > 0 && event.clientX > 0) {
+              const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+              const picked = efforts[Math.round(x * (count - 1))] ?? efforts[(activeIdx + 1) % count];
+              selectLevel(picked);
+            } else {
+              selectLevel(efforts[(activeIdx + 1) % count]);
+            }
+          },
+        },
+        fill,
+        ...notches,
+        thumb,
+      );
+      return slider;
+    };
+
+    const buildItems = (): ActionItem[] => {
+      const actions: ActionItem[] = [
+        {
+          id: 'attach-file',
+          section: t('Context'),
+          label: t('Attach file…'),
+          description: t('Attach files'),
+          run: () => {
+            this.closeActionMenu();
+            send({ type: 'pickFiles', paneId });
+          },
+        },
+        {
+          id: 'mention-file',
+          section: t('Context'),
+          label: t('Mention file from this project…'),
+          description: t('Mention a file (@)'),
+          run: () => {
+            this.closeActionMenu();
+            const textarea = this.input;
+            if (!textarea) return;
+            const start = textarea.selectionStart ?? textarea.value.length;
+            const before = textarea.value.slice(0, start);
+            const prefix = before && !/\s$/.test(before) ? ' @' : '@';
+            textarea.setRangeText(prefix, start, textarea.selectionEnd ?? start, 'end');
+            textarea.dispatchEvent(new Event('input'));
+            textarea.focus();
+          },
+        },
+        {
+          id: 'clear-conversation',
+          section: t('Context'),
+          label: t('Clear conversation'),
+          run: () => sendSlash('/clear'),
+        },
+        ...(isClaude || isDsh
+          ? [
+              {
+                id: 'rewind',
+                section: t('Context'),
+                label: t('Rewind'),
+                run: () => sendSlash('/rewind'),
+              },
+            ]
+          : []),
+        ...(this.host.saveMemory
+          ? [
+              {
+                id: 'bookmarks',
+                section: t('Context'),
+                label: t('Bookmarks'),
+                run: () => {
+                  this.closeActionMenu();
+                  const msgs = transcript?.messages ?? [];
+                  for (let i = msgs.length - 1; i >= 0; i--) {
+                    if (msgs[i].role === 'assistant' || msgs[i].role === 'user') {
+                      this.host.saveMemory?.(paneId, msgs[i], i);
+                      return;
+                    }
+                  }
+                },
+              },
+            ]
+          : []),
+        {
+          id: 'export-conversation',
+          section: t('Context'),
+          label: t('Export conversation'),
+          run: () => {
+            this.closeActionMenu();
+            send({ type: 'exportConversation', paneId });
+          },
+        },
+      ];
+
+      if (preset?.models.length) {
+        const currentModel = getModel();
+        actions.push({
+          id: 'switch-model',
+          section: t('Model'),
+          label: t('Switch model…'),
+          trailing: currentModel ? h('span', { class: 'action-model-indicator' }, shortModel(currentModel)) : undefined,
+          run: () => {
+            this.closeActionMenu();
+            const modelBtn = this.composer?.querySelector<HTMLButtonElement>('.model-pill .chip-picker');
+            modelBtn?.click();
+          },
+        });
+      }
+
+      if (preset?.efforts.length) {
+        const currentEffort = getEffort();
+        const effortTitle = effortLabels[currentEffort.toLowerCase()] ?? currentEffort;
+        actions.push({
+          id: 'effort-level',
+          section: t('Model'),
+          label: t('Effort'),
+          labelSuffix: h('span', { class: 'action-label-suffix' }, `(${effortTitle})`),
+          trailing: renderEffortSlider(),
+          keepOpen: true,
+          run: () => {
+            const idx = efforts.indexOf(getEffort());
+            const next = efforts[(idx + 1) % efforts.length];
+            draft.effort = next;
+            draft.effortDirty = next !== transcript?.effort;
+            this.host.persist();
+            const effortBtn = this.composer?.querySelectorAll<HTMLElement>('.model-pill .chip-picker-text')[1];
+            if (effortBtn) effortBtn.textContent = next;
+            this.renderActionMenuList(popup, paneId);
+          },
+        });
+      }
+
+      if (isClaude) {
+        actions.push(
+          {
+            id: 'toggle-thinking',
+            section: t('Model'),
+            label: t('Toggle extended thinking'),
+            trailing: renderToggle(this.actionMenuThinking),
+            keepOpen: true,
+            run: () => {
+              this.actionMenuThinking = !this.actionMenuThinking;
+              this.renderActionMenuList(popup, paneId);
+            },
+          },
+          {
+            id: 'switch-models-on-flag',
+            section: t('Model'),
+            label: t('Switch models when a message is flagged'),
+            trailing: renderToggle(this.actionMenuFlaggedSwitch),
+            keepOpen: true,
+            run: () => {
+              this.actionMenuFlaggedSwitch = !this.actionMenuFlaggedSwitch;
+              this.renderActionMenuList(popup, paneId);
+            },
+          },
+          {
+            id: 'toggle-fast',
+            section: t('Model'),
+            label: t('Toggle fast mode'),
+            run: () => sendSlash('/fast'),
+          },
+        );
+      }
+
+      actions.push({
+        id: 'account-usage',
+        section: t('Model'),
+        label: t('Account & usage…'),
+        run: () => sendSlash(isCodex ? '/status' : '/usage'),
+      });
+
+      if (isClaude) {
+        actions.push(
+          {
+            id: 'mcp-servers',
+            section: t('Customize'),
+            label: t('MCP servers'),
+            run: () => sendSlash('/mcp'),
+          },
+          {
+            id: 'permissions',
+            section: t('Customize'),
+            label: t('Permissions'),
+            run: () => sendSlash('/permissions'),
+          },
+        );
+      } else if (isDsh) {
+        actions.push({
+          id: 'permissions',
+          section: t('Customize'),
+          label: t('Permissions'),
+          run: () => insertText('/permission '),
+        });
+      }
+
+      actions.push(
+        {
+          id: 'status',
+          section: t('Customize'),
+          label: t('Status'),
+          run: () => sendSlash('/status'),
+        },
+        {
+          id: 'browse-slash-commands',
+          section: t('Customize'),
+          label: t('Slash commands'),
+          keepOpen: true,
+          run: () => {
+            const filter = popup.querySelector<HTMLInputElement>('.action-filter-input');
+            if (filter) {
+              filter.value = '/';
+              this.actionMenuQuery = '/';
+              this.actionMenuIndex = 0;
+              this.requestActionMenuCommands(paneId, '/');
+              this.renderActionMenuList(popup, paneId);
+              filter.focus();
+            }
+          },
+        },
+        {
+          id: 'open-in-herdr',
+          section: t('Customize'),
+          label: t('Open in Herdr terminal'),
+          run: () => {
+            this.closeActionMenu();
+            send({ type: 'focusPaneInHerdr', paneId });
+          },
+        },
+        {
+          id: 'general-config',
+          section: t('Settings'),
+          label: t('General config…'),
+          run: () => {
+            this.closeActionMenu();
+            send({ type: 'openSettings' });
+          },
+        },
+      );
+
+      for (const item of this.actionMenuSlashItems) {
+        actions.push({
+          id: `slash-${item.label}`,
+          section: t('Slash Commands'),
+          label: item.label,
+          description: item.description,
+          run: () => insertText(item.insert),
+        });
+      }
+      return actions;
+    };
+
+    (popup as any).__buildItems = buildItems;
+    popup.hidden = false;
+    popup.classList.add('action-menu-popup');
+
+    let filterInput = popup.querySelector<HTMLInputElement>('.action-filter-input');
+    let listContainer = popup.querySelector<HTMLElement>('.action-command-list');
+    if (!filterInput || !listContainer) {
+      filterInput = h('input', {
+        type: 'text',
+        class: 'action-filter-input',
+        placeholder: t('Filter actions…'),
+        'aria-label': t('Filter actions…'),
+        value: this.actionMenuQuery,
+        oninput: (event: Event) => {
+          this.actionMenuQuery = (event.target as HTMLInputElement).value;
+          this.actionMenuIndex = 0;
+          this.requestActionMenuCommands(paneId, this.actionMenuQuery.trim());
+          this.renderActionMenuList(popup, paneId);
+        },
+        onkeydown: (event: KeyboardEvent) => this.onActionMenuKeyDown(event, popup, paneId),
+      });
+      listContainer = h('div', { class: 'action-command-list', role: 'listbox', 'aria-label': t('Commands') });
+      popup.replaceChildren(filterInput, listContainer);
+    } else if (filterInput.value !== this.actionMenuQuery) {
+      filterInput.value = this.actionMenuQuery;
+    }
+
+    this.renderActionMenuList(popup, paneId);
+  }
+
+  private renderActionMenuList(popup: HTMLElement, paneId: string): void {
+    const { h } = this.host;
+    const listContainer = popup.querySelector<HTMLElement>('.action-command-list');
+    const buildItems = (popup as any).__buildItems as (() => {
+      id: string;
+      section: string;
+      label: string;
+      labelSuffix?: HTMLElement | string;
+      description?: string;
+      trailing?: HTMLElement;
+      keepOpen?: boolean;
+      run: () => void;
+    }[]) | undefined;
+    if (!listContainer || !buildItems) return;
+
+    const all = buildItems();
+    const rawQuery = this.actionMenuQuery.trim().toLowerCase();
+    const slashOnly = rawQuery.startsWith('/');
+    const needle = slashOnly ? rawQuery.slice(1) : rawQuery;
+
+    const filtered = all.filter((item) => {
+      if (!rawQuery) {
+        // 與 Claude Code 相同：未輸入搜尋字時，先顯示 Context / Model / Customize / Settings，輸入文字或 `/` 時才展開 Slash Commands
+        return item.section !== t('Slash Commands');
+      }
+      if (slashOnly && item.section !== t('Slash Commands')) return false;
+      if (!needle) return true;
+      return (
+        item.label.toLowerCase().includes(needle) ||
+        (item.description?.toLowerCase().includes(needle) ?? false) ||
+        item.section.toLowerCase().includes(needle)
+      );
+    });
+
+    (popup as any).__filteredItems = filtered;
+    if (this.actionMenuIndex >= filtered.length) this.actionMenuIndex = Math.max(0, filtered.length - 1);
+
+    if (!filtered.length) {
+      listContainer.replaceChildren(h('div', { class: 'action-empty-state', role: 'option', 'aria-disabled': 'true' }, t('No matching commands')));
+      return;
+    }
+
+    const sections = new Map<string, typeof filtered>();
+    for (const item of filtered) {
+      const group = sections.get(item.section) ?? [];
+      group.push(item);
+      sections.set(item.section, group);
+    }
+
+    const nodes: HTMLElement[] = [];
+    let flatIdx = 0;
+    let sectionIdx = 0;
+    for (const [sectionName, items] of sections) {
+      if (sectionIdx > 0) nodes.push(h('div', { class: 'action-section-divider', 'aria-hidden': 'true' }));
+      nodes.push(h('div', { class: 'action-section-header', role: 'presentation' }, sectionName));
+      for (const item of items) {
+        const myIdx = flatIdx++;
+        const active = myIdx === this.actionMenuIndex;
+        const row = h(
+          'div',
+          {
+            class: `action-command-item ${active ? 'selected' : ''}`,
+            role: 'option',
+            'aria-selected': String(active),
+            title: item.description,
+            onmousemove: () => {
+              if (this.actionMenuIndex !== myIdx) {
+                this.actionMenuIndex = myIdx;
+                listContainer.querySelectorAll('.action-command-item').forEach((el, idx) => {
+                  el.classList.toggle('selected', idx === myIdx);
+                  el.setAttribute('aria-selected', String(idx === myIdx));
+                });
+              }
+            },
+            onmousedown: (event: MouseEvent) => {
+              event.preventDefault();
+              item.run();
+            },
+          },
+          h(
+            'div',
+            { class: 'action-command-content' },
+            h('span', { class: 'action-command-label' }, item.label, item.labelSuffix ?? null),
+            item.description && item.section === t('Slash Commands')
+              ? h('div', { class: 'action-command-desc' }, item.description)
+              : null,
+          ),
+          item.trailing ?? null,
+        );
+        nodes.push(row);
+      }
+      sectionIdx++;
+    }
+
+    if (slashOnly) {
+      nodes.push(
+        h(
+          'div',
+          { class: 'completion-footer' },
+          t("↑↓ to select · Enter to insert"),
+          h(
+            'button',
+            {
+              class: 'link',
+              title: t("Open the agent’s / menu and read the complete list"),
+              onmousedown: (event: MouseEvent) => {
+                event.preventDefault();
+                this.host.send({ type: 'refreshCommands', paneId });
+              },
+            },
+            t("Refresh list"),
+          ),
+        ),
+      );
+    }
+
+    listContainer.replaceChildren(...nodes);
+    listContainer.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  private onActionMenuKeyDown(event: KeyboardEvent, popup: HTMLElement, paneId: string): void {
+    const filtered = ((popup as any).__filteredItems ?? []) as { run: () => void }[];
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeActionMenu();
+      this.input?.focus();
+      return;
+    }
+    if (event.key === 'ArrowDown' && filtered.length) {
+      event.preventDefault();
+      this.actionMenuIndex = (this.actionMenuIndex + 1) % filtered.length;
+      this.renderActionMenuList(popup, paneId);
+      return;
+    }
+    if (event.key === 'ArrowUp' && filtered.length) {
+      event.preventDefault();
+      this.actionMenuIndex = (this.actionMenuIndex - 1 + filtered.length) % filtered.length;
+      this.renderActionMenuList(popup, paneId);
+      return;
+    }
+    if ((event.key === 'Enter' || event.key === 'Tab') && filtered.length) {
+      event.preventDefault();
+      filtered[this.actionMenuIndex]?.run();
+    }
   }
 
   private accept(item: CompletionItem): void {

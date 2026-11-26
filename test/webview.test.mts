@@ -1,3 +1,5 @@
+import { parsePrompt } from '../src/codexMenu.ts';
+import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import { Window, type HTMLButtonElement as DOMButton, type HTMLDetailsElement as DOMDetails, type HTMLElement as DOMElement, type HTMLTextAreaElement as DOMTextArea } from 'happy-dom';
 import assert from 'node:assert/strict';
@@ -118,6 +120,29 @@ test('沒有可讀紀錄時仍可送出訊息，終端機回顯不會移除待�
     f.transcript.messages = [{ role: 'user', text: '開始新的工作' }]; f.updateTranscript();
     assert.equal(f.messages().querySelectorAll('.turn.user').length, 1);
     assert.equal(f.messages().querySelector('.turn.user.pending'), null);
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('分頁式 Allow 顯示目前選項與操作說明，點擊後才送出選擇', async () => {
+  const f = fixture();
+  try {
+    const screen = readFileSync(new URL('./fixtures-paged-allow-screen.txt', import.meta.url), 'utf8');
+    const prompt = parsePrompt(screen);
+    f.state.tabs[0].agents[0].status = 'idle'; f.updateState();
+    f.transcript.screen = screen;
+    f.transcript.dialog = prompt.options;
+    f.transcript.dialogTitle = prompt.title;
+    f.transcript.dialogQuestion = prompt.question;
+    f.updateTranscript();
+    const options = f.document.querySelectorAll<DOMButton>('.dialog-options > .option');
+    assert.equal(options.length, 1, '只顯示目前可見的選項');
+    assert.equal(options[0].querySelector('.option-text')!.textContent, 'Allow');
+    assert.equal(options[0].querySelector('.option-desc')!.textContent, 'Run the tool and continue');
+    assert.equal(f.document.querySelector('.dialog-question')!.textContent, 'Allow the mcp-search MCP server to run tool');
+    assert.equal(f.document.querySelector('.dialog-card details')!.hasAttribute('open'), false);
+    assert.equal(f.sent.filter((message) => message.type === 'chooseOption').length, 0);
+    options[0].click();
+    assert.deepEqual(structuredClone(f.sent.find((message) => message.type === 'chooseOption')), { type: 'chooseOption', paneId: f.paneId, number: 1 });
   } finally { await f.window.happyDOM.close(); }
 });
 
@@ -1048,6 +1073,72 @@ test('思考中秒數每秒自動遞增更新，不需切換頁面', async () =>
   } finally { await f.window.happyDOM.close(); }
 });
 
+test('點擊 / 按鈕開啟 Claude 樣式動作選單：包含篩選框、Context、Model 滑桿與 Toggle 開關', async () => {
+  const f = fixture('en-US');
+  try {
+    f.state.presets = [{
+      id: 'claude',
+      label: 'Claude',
+      models: ['claude-sonnet-5-5', 'claude-opus-5-5'],
+      efforts: ['low', 'medium', 'high', 'max'],
+      defaultModel: 'claude-sonnet-5-5',
+      defaultEffort: 'medium',
+      canSwitchModel: true,
+      canSwitchEffort: true,
+    }];
+    f.state.tabs[0].agents[0].presetId = 'claude';
+    f.transcript.model = 'claude-sonnet-5-5';
+    f.transcript.effort = 'medium';
+    f.updateState();
+    f.updateTranscript();
+
+    const slashButton = f.document.querySelector<DOMButton>('button[aria-label="Commands"]')!;
+    slashButton.click();
+
+    const popup = f.document.querySelector<DOMElement>('.completion.action-menu-popup')!;
+    assert.ok(popup && !popup.hidden, '開啟 Claude 樣式動作選單');
+    const filter = popup.querySelector<DOMElement>('.action-filter-input')!;
+    assert.equal(filter.getAttribute('placeholder'), 'Filter actions…');
+
+    const headers = Array.from(popup.querySelectorAll('.action-section-header')).map((el) => el.textContent);
+    assert.deepEqual(headers, ['Context', 'Model', 'Customize', 'Settings']);
+
+    const labels = Array.from(popup.querySelectorAll('.action-command-label')).map((el) => el.textContent);
+    assert.ok(labels.includes('Attach file…'));
+    assert.ok(labels.includes('Mention file from this project…'));
+    assert.ok(labels.includes('Clear conversation'));
+    assert.ok(labels.includes('Rewind'));
+    assert.ok(labels.includes('Export conversation'));
+    assert.ok(labels.includes('Switch model…'));
+    assert.ok(labels.some((text) => text?.includes('Effort(Medium)')));
+    assert.ok(labels.includes('Switch models when a message is flagged'));
+
+    const slider = popup.querySelector<DOMButton>('.effort-slider')!;
+    assert.ok(slider, '顯示多段式 Effort 滑桿');
+    slider.click();
+    assert.ok(
+      Array.from(popup.querySelectorAll('.action-command-label')).some((el) => el.textContent?.includes('Effort(High)')),
+      '點擊 Effort 滑桿切換至下一段 High',
+    );
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('已啟用協作時可點擊「取消協作」停用規劃者並解除唯讀鎖定', async () => {
+  const f = collaborationFixture();
+  try {
+    assert.match(f.document.querySelector('.task-planner-label')!.textContent!, /規劃者：Claude/);
+    f.click('.task-disable-collaboration');
+    const msg = f.sent.filter((item) => item.type === 'disableCollaboration').at(-1);
+    assert.ok(msg, '送出 disableCollaboration 訊息');
+    f.task.enabled = false;
+    f.task.status = 'active';
+    delete f.task.plannerDelivery;
+    f.emitTasks();
+    f.emit({ type: 'taskOperation', tabId: f.task.tabId, operationId: msg.operationId, kind: 'planner' });
+    assert.match(f.document.querySelector('.task-planner-label')!.textContent!, /尚未啟用協作規劃/);
+  } finally { await f.window.happyDOM.close(); }
+});
+
 test('輸入框有還沒送出的訊息時，tab 與 agent 清單顯示編輯圖示', async () => {
   const f = collaborationFixture();
   try {
@@ -1062,5 +1153,27 @@ test('輸入框有還沒送出的訊息時，tab 與 agent 清單顯示編輯圖
     f.input().value = ''; f.input().dispatchEvent(new f.window.Event('input'));
     f.click('[data-task-page="chat"]');
     assert.equal(f.document.querySelector('[data-agent-pane="wE:p1"] .draft-mark'), null, '清空後圖示消失');
+  } finally { await f.window.happyDOM.close(); }
+});
+
+test('記憶以全寬卡片顯示，並可點擊垃圾桶按鈕刪除', async () => {
+  const f = collaborationFixture();
+  try {
+    f.click('.task-page-button');
+    f.click('[data-task-page="memory"]');
+    const list = f.document.querySelector('.task-memory-list')!;
+    assert.ok(list, '記憶清單以卡片容器渲染');
+    const card = list.querySelector('.task-memory-reference')!;
+    assert.ok(card.querySelector('.task-memory-heading'));
+    assert.ok(card.querySelector('.task-memory-meta'));
+    const delBtn = card.querySelector<DOMButton>('.task-delete-memory')!;
+    assert.ok(delBtn, '記憶卡片右上角有刪除按鈕');
+    delBtn.click();
+    const sentDel = f.sent.filter((item) => item.type === 'deleteTaskMemory').at(-1);
+    assert.ok(sentDel);
+    assert.equal(sentDel.memoryId, 42);
+    f.task.memoryReferences = [];
+    f.emitTasks();
+    assert.equal(f.document.querySelectorAll('.task-memory-reference').length, 0);
   } finally { await f.window.happyDOM.close(); }
 });

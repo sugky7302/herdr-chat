@@ -314,7 +314,36 @@ export class TaskView {
         },
       }, this.plannerOperations[tab.tabId] ? t("Enabling…") : selected ? t("Use {0} as planner", paneName(selected)) : t("Add an agent first")));
     } else {
-      plannerRow.append(h('button', { class: 'secondary small', disabled: delivery?.status === 'sending' && !pending, onclick: () => this.openHandoff() }, pending ? t("View handoff") : t("Hand off planner")));
+      plannerRow.append(
+        h(
+          'div',
+          { class: 'task-planner-actions' },
+          h(
+            'button',
+            {
+              class: 'secondary small',
+              disabled: (delivery?.status === 'sending' && !pending) || Boolean(this.plannerOperations[tab.tabId]),
+              onclick: () => this.openHandoff(),
+            },
+            pending ? t("View handoff") : t("Hand off planner"),
+          ),
+          h(
+            'button',
+            {
+              class: 'link small task-disable-collaboration',
+              disabled: Boolean(this.plannerOperations[tab.tabId]),
+              onclick: () => {
+                const operationId = this.operationId();
+                this.plannerOperations[tab.tabId] = operationId;
+                if (this.handoffs[tab.tabId]) this.handoffs[tab.tabId].open = false;
+                this.host.send({ type: 'disableCollaboration', tabId: tab.tabId, operationId });
+                this.refreshCurrent();
+              },
+            },
+            this.plannerOperations[tab.tabId] ? t("Disabling…") : t("Disable collaboration"),
+          ),
+        ),
+      );
     }
     this.heading!.replaceChildren(toolbar, plannerRow);
     if (pending) {
@@ -381,7 +410,7 @@ export class TaskView {
           const statusText = labels[agent.status] ?? agent.status;
           return h('li', { class: 'row-wrap' },
             h('button', {
-              class: `row task-agent ${agent.focused ? 'active' : ''}`, 'data-agent-pane': agent.paneId,
+              class: 'row task-agent', 'data-agent-pane': agent.paneId,
               title: `${paneName(agent)} · ${agent.paneId}`, onclick: () => this.host.openAgent(agent.paneId),
             },
             h('span', { class: `status status-${agent.status}`, title: statusText, role: 'img', 'aria-label': statusText }),
@@ -618,25 +647,57 @@ export class TaskView {
 
   private renderMemories(): void {
     const { h } = this.host;
-    const references = this.task()?.memoryReferences ?? [];
-    const key = JSON.stringify(references);
+    const task = this.task();
+    const tab = this.tab!;
+    const archived = task?.status === 'archived';
+    const references = task?.memoryReferences ?? [];
+    const key = JSON.stringify([archived, references]);
     if (this.recordsKey === key) return;
     this.recordsKey = key;
     this.content!.replaceChildren(h('p', { class: 'muted pad' }, t("Memories saved from conversations remain linked to this task with their actual Claude-mem record IDs.")));
-    if (!references.length) this.content!.append(h('p', { class: 'muted pad' }, t("No memories saved for this task yet.")));
+    if (!references.length) {
+      this.content!.append(h('p', { class: 'muted pad' }, t("No memories saved for this task yet.")));
+      return;
+    }
+    const list = h('div', { class: 'task-memory-list' });
     for (const memory of references) {
-      const item = h('article', { class: 'task-memory-reference', 'data-memory-id': String(memory.id) },
-        h('strong', {}, memory.title || t("Memory #{0}", memory.id)), h('span', { class: 'task-memory-id' }, `Claude-mem #${memory.id}`));
+      const heading = h(
+        'div',
+        { class: 'task-memory-heading' },
+        h('div', { class: 'task-memory-title-wrap' },
+          h('strong', { class: 'task-memory-title' }, memory.title || t("Memory #{0}", memory.id)),
+          h('span', { class: 'task-memory-id' }, `Claude-mem #${memory.id}`),
+        ),
+        !archived
+          ? h(
+              'button',
+              {
+                type: 'button',
+                class: 'icon-button task-delete-memory',
+                title: t("Delete memory"),
+                'aria-label': t("Delete memory #{0}", memory.id),
+                onclick: () => {
+                  this.host.send({ type: 'deleteTaskMemory', tabId: tab.tabId, operationId: this.operationId(), memoryId: Number(memory.id) });
+                },
+              },
+              this.host.icon('trash'),
+            )
+          : null,
+      );
+      const item = h('article', { class: 'task-memory-reference', 'data-memory-id': String(memory.id) }, heading);
       if (memory.text) item.append(h('p', { class: 'task-memory-text' }, memory.text));
-      if (memory.project) item.append(h('div', { class: 'muted' }, t("Project: {0}", memory.project)));
+      const meta = h('div', { class: 'task-memory-meta' });
+      if (memory.project) meta.append(h('span', { class: 'muted' }, t("Project: {0}", memory.project)));
       if (memory.source) {
         const source = memory.source;
-        const agent = this.task()?.participants.find((candidate) => candidate.paneId === source.paneId);
-        item.append(h('div', { class: 'muted' }, source.messageIndex === undefined ? t("Source: {0}", agent ? identityName(agent) : source.paneId || t("This task")) : t("Source: {0} · message {1}", agent ? identityName(agent) : source.paneId || t("This task"), source.messageIndex + 1)));
+        const agent = task?.participants.find((candidate) => candidate.paneId === source.paneId);
+        meta.append(h('span', { class: 'muted' }, source.messageIndex === undefined ? t("Source: {0}", agent ? identityName(agent) : source.paneId || t("This task")) : t("Source: {0} · message {1}", agent ? identityName(agent) : source.paneId || t("This task"), source.messageIndex + 1)));
       }
-      item.append(h('time', { dateTime: memory.savedAt }, timeLabel(memory.savedAt)));
-      this.content!.append(item);
+      meta.append(h('time', { dateTime: memory.savedAt }, timeLabel(memory.savedAt)));
+      item.append(meta);
+      list.append(item);
     }
+    this.content!.append(list);
   }
 
   finishOperation(result: Operation): void {

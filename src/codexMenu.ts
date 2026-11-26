@@ -13,7 +13,7 @@ export interface MenuOption {
   highlighted: boolean;
 }
 
-const OPTION_LINE = /^[\s│|]*(›|>|❯)?\s*(\d+)\.\s+(.+?)(?:\s{2,}.*)?[\s│|]*$/;
+const OPTION_LINE = /^[\s│|]*(›|>|❯)?\s*(\d+)\.\s+(.+?)(?:\s{2,}(.*?))?[\s│|]*$/;
 
 export function normalizeLabel(label: string): string {
   return label
@@ -83,6 +83,7 @@ export interface DialogPrompt {
 }
 
 const SEPARATOR = /^[\s│|]*[─━—\-=]{3,}[\s│|]*$/;
+const PAGED_OPTION_FOOTER = /^[\s│|]*option\s+(\d+)\/(\d+)\s*\|\s*enter to submit\s*\|\s*esc to cancel[\s│|]*$/i;
 
 /**
  * 從 agent 的確認或提問畫面取出選項，例如「❯ 1. Yes」「2. No」。
@@ -94,8 +95,8 @@ export function parseDialog(screen: string): DialogOption[] {
 
 export function parsePrompt(screen: string): DialogPrompt {
   const lines = screen.split('\n');
-  const groups: { start: number; options: DialogOption[] }[] = [];
-  let current: { start: number; options: DialogOption[] } | null = null;
+  const groups: { start: number; options: DialogOption[]; paged?: boolean }[] = [];
+  let current: (typeof groups)[number] | null = null;
   const close = () => {
     if (current) groups.push(current);
     current = null;
@@ -107,10 +108,22 @@ export function parsePrompt(screen: string): DialogPrompt {
       const last = current?.options[current.options.length - 1];
       if (current && last && number !== last.number + 1) close();
       current ??= { start: index, options: [] };
-      current.options.push({ number, text: match[3].trim(), highlighted: Boolean(match[1]) });
+      const description = match[4]?.trim();
+      current.options.push({ number, text: match[3].trim(), highlighted: Boolean(match[1]), ...(description ? { description } : {}) });
       return;
     }
     if (!current) return;
+    const footer = PAGED_OPTION_FOOTER.exec(line);
+    if (footer) {
+      const position = Number(footer[1]);
+      const total = Number(footer[2]);
+      const option = current.options[0];
+      // 分頁式選單一次只顯示一個選項，必須同時有相符的游標與分頁提示。
+      current.paged = current.options.length === 1 && option.highlighted && option.number === position
+        && Number.isSafeInteger(position) && Number.isSafeInteger(total) && position >= 1 && total >= position;
+      close();
+      return;
+    }
     // 空行與分隔線不會中斷選項清單（Claude 把「Chat about this」放在分隔線後面）。
     if (!line.trim() || SEPARATOR.test(line)) return;
     const continuation = /^[\s│|]{4,}(\S.*?)[\s│|]*$/.exec(line);
@@ -123,22 +136,23 @@ export function parsePrompt(screen: string): DialogPrompt {
   });
   close();
   const chosen = [...groups].reverse().find((group) => group.options.some((option) => option.highlighted));
-  if (!chosen || chosen.options.length < 2) {
+  if (!chosen || (chosen.options.length < 2 && !chosen.paged)) {
     return { options: parseUnnumbered(lines) };
   }
-  return { ...promptAbove(lines, chosen.start), options: chosen.options };
+  return { ...promptAbove(lines, chosen.start, chosen.paged), options: chosen.options };
 }
 
 /** 選項上方的問題與標題：往上讀到分隔線或輸入提示為止，最多 4 行。 */
-function promptAbove(lines: string[], start: number): { title?: string; question?: string } {
+function promptAbove(lines: string[], start: number, paged = false): { title?: string; question?: string } {
   const collected: string[] = [];
   for (let i = start - 1; i >= 0 && collected.length < 4; i--) {
     const line = lines[i];
     if (!line.trim()) continue;
+    if (paged && /^[\s│|]*Field\s+\d+\/\d+[\s│|]*$/i.test(line)) break;
     if (SEPARATOR.test(line) || /^\s*(❯|>)\s/.test(line) || /^\s*[╭╰]/.test(line)) break;
     collected.unshift(line.replace(/^[\s│|]+|[\s│|]+$/g, ''));
   }
-  const titleIndex = collected.findIndex((line) => /^[☐☒✔✓□■]/.test(line));
+  const titleIndex = collected.findIndex((line) => /^[☐☒✔✓□■]/.test(line) || (paged && /^Server:/i.test(line)));
   const title = titleIndex >= 0 ? collected.splice(titleIndex, 1)[0] : undefined;
   const question = collected.join(' ').trim() || undefined;
   return { ...(title ? { title } : {}), ...(question ? { question } : {}) };

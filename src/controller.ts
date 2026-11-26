@@ -362,6 +362,11 @@ export class Controller implements vscode.Disposable {
     await this.collaboration.enablePlanner(task.id);
   }
 
+  async disableCollaboration(tabId: string): Promise<void> {
+    const task = await this.openTask(tabId);
+    await this.collaboration.disablePlanner(task.id);
+  }
+
   async copyCollaborationPrompt(tabId: string): Promise<void> {
     const task = await this.openTask(tabId);
     await vscode.env.clipboard.writeText(this.collaboration.getCollaborationPrompt(task.id));
@@ -406,11 +411,17 @@ export class Controller implements vscode.Disposable {
     return saved.id;
   }
 
+  async deleteTaskMemory(tabId: string, memoryId: number): Promise<void> {
+    const task = await this.openTask(tabId);
+    if (task.status === 'archived') throw new Error(t("This task is archived. Its memories are read-only."));
+    await this.collaboration.removeMemoryReference(task.id, memoryId);
+  }
+
   private plannerReadOnly(paneId: string): string | undefined {
     const pane = this.pane(paneId);
     if (!pane) return undefined;
     const task = this.collaboration?.getTaskForTab(pane.tab_id);
-    if (!task) return undefined;
+    if (!task?.enabled) return undefined;
     if (task.status === 'handoff_pending' && task.planner.paneId === paneId) return t("A planner handoff is in progress. The previous planning turn is paused.");
     if (task.status === 'handoff_pending' && task.handoffs.some((handoff) => handoff.status === 'awaiting_accept' && handoff.target?.paneId === paneId)) {
       return t("Waiting for the new planner to explicitly accept the handoff. Complete the handoff first.");
@@ -1248,6 +1259,24 @@ export class Controller implements vscode.Disposable {
 
   currentState(): ProjectState | null {
     return this.state;
+  }
+
+  async exportConversation(paneId: string): Promise<void> {
+    const pane = this.pane(paneId);
+    if (!pane) throw new Error(t("This pane is closed."));
+    const transcript = await this.transcripts.read(pane);
+    const lines = transcript.messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
+      .map((m) => {
+        if (m.role === 'user') return `## User\n\n${m.text}`;
+        if (m.role === 'tool') return `- [${m.tool ?? 'tool'}] ${m.text}`;
+        return `## Assistant\n\n${m.text}`;
+      });
+    const doc = await vscode.workspace.openTextDocument({
+      language: 'markdown',
+      content: lines.join('\n\n') || '# Conversation\n',
+    });
+    await vscode.window.showTextDocument(doc, { preview: false });
   }
 
   private requireWorkspace(): ProjectState & { workspaceId: string } {

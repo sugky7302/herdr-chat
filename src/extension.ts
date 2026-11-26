@@ -133,6 +133,9 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
         case 'saveTaskMemory':
           await this.taskOperation(message, 'memory', async () => ({ memoryId: await c.saveTaskMemory(message) }));
           break;
+        case 'deleteTaskMemory':
+          await this.taskOperation(message, 'memory', async () => { await c.deleteTaskMemory(message.tabId, message.memoryId); return { memoryId: message.memoryId }; });
+          break;
         case 'prepareHandoff':
           await this.taskOperation(message, 'checkpoint', async () => ({ checkpoint: await c.prepareHandoff(message.tabId) }));
           break;
@@ -144,6 +147,9 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
           break;
         case 'assignPlanner':
           await this.taskOperation(message, 'planner', async () => { await c.assignPlanner(message.tabId, message.paneId); return {}; });
+          break;
+        case 'disableCollaboration':
+          await this.taskOperation(message, 'planner', async () => { await c.disableCollaboration(message.tabId); return {}; });
           break;
         case 'copyCollaborationPrompt':
           await c.copyCollaborationPrompt(message.tabId);
@@ -279,6 +285,9 @@ class HerdrViewProvider implements vscode.WebviewViewProvider, vscode.Disposable
           break;
         case 'openSkillFile':
           await vscode.window.showTextDocument(vscode.Uri.file(await this.settings.skillPath(message.skillId)), { preview: false });
+          break;
+        case 'exportConversation':
+          await c.exportConversation(message.paneId);
           break;
       }
     } catch (error) {

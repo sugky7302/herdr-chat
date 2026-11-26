@@ -395,7 +395,7 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
 }
 .chat-input.dragging .drop-hint { display: flex; }
 
-/* 補全選單 */
+/* 補全選單與 Claude Code 樣式動作選單 */
 .completion {
   border: 1px solid var(--vscode-editorSuggestWidget-border, var(--border));
   background: var(--vscode-editorSuggestWidget-background, var(--vscode-editorWidget-background));
@@ -403,6 +403,201 @@ input { padding: 3px 6px; flex: 1; min-width: 0; }
   max-height: 260px;
   overflow-y: auto;
   box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+}
+.completion.action-menu-popup {
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  max-height: 360px;
+  overflow: hidden;
+  background: var(--vscode-menu-background, var(--vscode-editorSuggestWidget-background, var(--vscode-editorWidget-background)));
+  border: 1px solid var(--vscode-input-border, var(--border));
+  box-shadow: 0 6px 20px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.42));
+}
+.completion.action-menu-popup[hidden] {
+  display: none;
+}
+.tool-button.open {
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-foreground);
+}
+.action-filter-input {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: none;
+  border-radius: 6px;
+  margin: 6px 6px 2px;
+  padding: 7px 10px;
+  font-size: 0.92em;
+  outline: none;
+}
+.action-filter-input:focus, .action-filter-input:focus-visible {
+  outline: none;
+  border: none;
+}
+.action-filter-input::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+  opacity: 0.7;
+}
+.action-command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  max-height: 300px;
+  padding: 4px 0 8px;
+}
+.action-section-divider {
+  height: 1px;
+  background: var(--vscode-input-border, var(--border));
+  margin: 5px 0;
+  flex: none;
+}
+.action-section-header {
+  color: var(--vscode-foreground);
+  opacity: 0.5;
+  padding: 4px 12px 2px;
+  font-size: 0.88em;
+  user-select: none;
+}
+.action-command-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 0 5px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.action-command-item.selected {
+  background: var(--vscode-list-activeSelectionBackground, var(--vscode-editorSuggestWidget-selectedBackground));
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-editorSuggestWidget-selectedForeground));
+}
+.action-command-content {
+  flex: 1;
+  min-width: 0;
+}
+.action-command-label {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.action-label-suffix {
+  color: var(--vscode-descriptionForeground);
+  margin-left: 4px;
+}
+.action-command-item.selected .action-label-suffix {
+  color: inherit;
+  opacity: 0.8;
+}
+.action-command-desc {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.action-command-item.selected .action-command-desc {
+  color: inherit;
+  opacity: 0.8;
+}
+.action-model-indicator {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+.action-command-item.selected .action-model-indicator {
+  color: inherit;
+  opacity: 0.9;
+}
+.action-empty-state {
+  padding: 12px;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+/* Claude 樣式多段式 Effort 滑桿 */
+.effort-slider {
+  --track-height: 18px;
+  --thumb-size: 14px;
+  --thumb-inset: 2px;
+  --track-width: 76px;
+  position: relative;
+  width: var(--track-width);
+  height: var(--track-height);
+  border-radius: 9px;
+  background: var(--vscode-input-border, rgba(128, 128, 128, 0.35));
+  cursor: pointer;
+  overflow: hidden;
+  border: none;
+  flex-shrink: 0;
+  padding: 0;
+}
+.effort-slider-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 9px;
+  background: var(--vscode-charts-blue, var(--vscode-button-background, #3794ff));
+  width: calc(var(--thumb-inset) + var(--r, 0) * (100% - var(--thumb-size) - 2 * var(--thumb-inset)) + var(--thumb-size) + var(--thumb-inset));
+  transition: width 0.15s;
+}
+.effort-slider-notch {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.45);
+  left: calc(var(--thumb-inset) + var(--r, 0) * (100% - var(--thumb-size) - 2 * var(--thumb-inset)) + var(--thumb-size) / 2);
+}
+.effort-slider-thumb {
+  position: absolute;
+  top: var(--thumb-inset);
+  width: var(--thumb-size);
+  height: var(--thumb-size);
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  left: calc(var(--thumb-inset) + var(--r, 0) * (100% - var(--thumb-size) - 2 * var(--thumb-inset)));
+  transition: left 0.15s;
+}
+/* Claude 樣式 Toggle 開關 */
+.action-toggle {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.action-toggle-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--vscode-input-border, rgba(128, 128, 128, 0.4));
+  transition: background 0.15s;
+}
+.action-toggle-track.on {
+  background: var(--vscode-charts-blue, var(--vscode-button-background, #3794ff));
+}
+.action-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: left 0.15s;
+}
+.action-toggle-thumb.on {
+  left: 16px;
 }
 .completion-item {
   display: flex;
@@ -697,6 +892,7 @@ button.task-page-item[aria-checked="true"]::before { content: '✓'; }
 .task-title.toolbar { position: static; }
 .task-title h2 { white-space: normal; overflow-wrap: anywhere; }
 .task-planner { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 10px 8px; flex-wrap: wrap; }
+.task-planner-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .task-planner-label { font-size: 0.9em; overflow-wrap: anywhere; color: var(--vscode-descriptionForeground); }
 .task-planner-delivery { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
 .task-planner-delivery[data-delivery-status="uncertain"] { color: var(--vscode-charts-yellow, var(--vscode-foreground)); }
@@ -752,9 +948,58 @@ button.task-page-item[aria-checked="true"]::before { content: '✓'; }
 .task-event p { margin: 4px 0 0; white-space: pre-wrap; line-height: 1.5; overflow-wrap: anywhere; }
 .task-event-handoff_accepted { border-left: 2px solid var(--vscode-charts-green, var(--border)); padding-left: 8px; }
 .task-pane-link { overflow-wrap: anywhere; text-align: left; }
-.task-memory-reference { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.task-memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 12px 16px;
+  width: 100%;
+}
+.task-memory-reference {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.06));
+  overflow-wrap: anywhere;
+}
+.task-memory-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.task-memory-title-wrap {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+  flex: 1;
+}
 .task-memory-id { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
 .task-memory-text { margin: 0; white-space: pre-wrap; line-height: 1.5; }
+.task-memory-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 0.88em;
+}
+.task-delete-memory {
+  flex: none;
+  opacity: 0.75;
+}
+.task-delete-memory:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--vscode-errorForeground);
+}
 @media (max-width: 360px) {
   .task-planner { align-items: flex-start; }
   .task-content > .toolbar h2 { white-space: normal; }

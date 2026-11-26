@@ -317,6 +317,25 @@ export class CollaborationService {
     return this.task(taskId);
   }
 
+  async disablePlanner(taskId: string): Promise<CollaborationTask> {
+    return this.mutate((tasks) => {
+      const task = taskIn(tasks, taskId);
+      if (task.status === 'archived') fail('task_archived', systemMessage("This task is archived."));
+      task.enabled = false;
+      task.status = 'active';
+      task.generation++;
+      delete task.plannerDelivery;
+      for (const handoff of task.handoffs) {
+        if (handoff.status === 'preparing' || handoff.status === 'awaiting_accept') {
+          handoff.status = 'failed';
+          setError(handoff, systemMessage("Collaboration was disabled."));
+        }
+      }
+      addEvent(task, 'state_changed', systemMessage("Disabled collaboration for this task."), { paneId: task.planner.paneId });
+      return task;
+    });
+  }
+
   async recordUserMessage(taskId: string, paneId: string, text: string): Promise<void> {
     if (!text.trim()) return;
     await this.mutate((tasks) => {
@@ -378,6 +397,16 @@ export class CollaborationService {
       if (index >= 0) task.memoryReferences[index] = saved;
       else task.memoryReferences.push(saved);
       addEvent(task, 'memory_saved', systemMessage('Saved Claude-mem memory #{0}: {1}', reference.id, reference.title ?? ''));
+    });
+  }
+
+  async removeMemoryReference(taskId: string, memoryId: number): Promise<void> {
+    await this.mutate((tasks) => {
+      const task = taskIn(tasks, taskId);
+      const index = task.memoryReferences.findIndex((item) => Number(item.id) === Number(memoryId));
+      if (index < 0) return;
+      const [removed] = task.memoryReferences.splice(index, 1);
+      addEvent(task, 'state_changed', systemMessage('Removed Claude-mem memory #{0}: {1}', removed.id, removed.title ?? ''));
     });
   }
 

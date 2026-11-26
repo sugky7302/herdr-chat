@@ -116,3 +116,38 @@ test('解析 Claude 提問畫面：標題、問題、說明與分隔線後的選
   assert.match(prompt.options[0].description ?? '', /^關聯式資料庫/);
   assert.equal(prompt.options[0].highlighted, true);
 });
+
+test('分頁式 Allow 選單只顯示一個選項時仍可辨識，並保留說明與伺服器資訊', () => {
+  const screen = readFileSync(new URL('./fixtures-paged-allow-screen.txt', import.meta.url), 'utf8');
+  assert.deepEqual(parsePrompt(screen), {
+    title: 'Server: mcp-search (environment local)',
+    question: 'Allow the mcp-search MCP server to run tool',
+    options: [{ number: 1, text: 'Allow', highlighted: true, description: 'Run the tool and continue' }],
+  });
+});
+
+test('分頁式選單保留目前選項的編號，並支援只有一個選項的選單', () => {
+  for (const [number, total] of [[3, 4], [1, 1]]) {
+    const screen = `Question\n    › ${number}. Visible choice  Choice details\n    option ${number}/${total} | enter to submit | esc to cancel`;
+    assert.deepEqual(parseDialog(screen), [
+      { number, text: 'Visible choice', highlighted: true, description: 'Choice details' },
+    ]);
+  }
+});
+
+test('單一編號文字缺少有效分頁提示時不會被當成確認選單', () => {
+  const option = '    › 1. Allow  Run the tool and continue';
+  for (const footer of [
+    '',
+    'Enter to confirm · Esc to cancel',
+    'option 2/4 | enter to submit | esc to cancel',
+    'option 0/4 | enter to submit | esc to cancel',
+    'option 1/0 | enter to submit | esc to cancel',
+    'option 1/4',
+    'option 1/4 | enter to submit',
+  ]) {
+    assert.deepEqual(parseDialog(`${option}\n    ${footer}`), [], footer);
+  }
+  assert.deepEqual(parseDialog('    › 5. Visible choice\n    option 5/4 | enter to submit | esc to cancel'), []);
+  assert.deepEqual(parseDialog('    1. Allow\n    option 1/4 | enter to submit | esc to cancel'), []);
+});

@@ -1,5 +1,8 @@
 /** Traditional Chinese translations for collaboration and memory services. */
 export const serviceMessages: Record<string, string> = {
+  "Removed Claude-mem memory #{0}: {1}": "已移除 Claude-mem 記憶 #{0}：{1}",
+  "Collaboration was disabled.": "已取消協作。",
+  "Disabled collaboration for this task.": "已取消此任務的協作。",
   "Required: {0}.": "需要 {0}。",
   "Timeout must be between 1 and 180000 ms.": "timeout 必須介於 1 與 180000 ms。",
   "This pane's agent or session has changed. Select the agent again; previous requests will not be sent to the new session.": "此 pane 的 agent/session 已更換；請重新選擇 agent，舊要求不會送給新 session。",
